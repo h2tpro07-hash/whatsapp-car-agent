@@ -9,7 +9,7 @@ const path = require('path');
 
 const express = require('express');
 
-const { findCars, listAvailableCars } = require('./src/services/supabase');
+const { findCars, listAvailableCars, checkConnection } = require('./src/services/supabase');
 const { generateReply } = require('./src/services/ai');
 const { extractKeywords } = require('./src/utils/extract');
 const { parseIncoming, toTwiml, formatForWhatsApp } = require('./src/services/whatsapp');
@@ -157,6 +157,11 @@ app.listen(PORT, () => {
     fs.existsSync(adminPage)
       ? `Interface admin disponible sur /admin (${adminPage})`
       : `ATTENTION: ${adminPage} introuvable, /admin renverra une erreur`
+  );
+
+  // Diagnostic Supabase au démarrage (visible dans les logs Render).
+  checkConnection().then(({ ok, url, error }) =>
+    console.log(ok ? `Supabase connecté (${url})` : `ATTENTION Supabase: ${error}`)
   );
 });
 

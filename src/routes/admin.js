@@ -4,7 +4,7 @@
  */
 const express = require('express');
 
-const { supabase } = require('../services/supabase');
+const { supabase, run } = require('../services/supabase');
 
 const router = express.Router();
 
@@ -56,8 +56,7 @@ router.get('/cars', async (req, res, next) => {
     let query = supabase.from('cars').select('*').order('id', { ascending: true });
     if (req.query.status) query = query.eq('status', req.query.status);
 
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
+    const data = await run(query);
     res.json({ count: data.length, cars: data });
   } catch (err) {
     next(err);
@@ -76,8 +75,7 @@ router.post('/cars', async (req, res, next) => {
       cars.push(car);
     }
 
-    const { data, error } = await supabase.from('cars').insert(cars).select();
-    if (error) throw new Error(error.message);
+    const data = await run(supabase.from('cars').insert(cars).select());
     res.status(201).json({ created: data.length, cars: data });
   } catch (err) {
     next(err);
@@ -91,8 +89,7 @@ router.patch('/cars/:id', async (req, res, next) => {
     if (errors.length) return res.status(400).json({ error: errors.join(', ') });
     if (Object.keys(car).length === 0) return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
 
-    const { data, error } = await supabase.from('cars').update(car).eq('id', req.params.id).select();
-    if (error) throw new Error(error.message);
+    const data = await run(supabase.from('cars').update(car).eq('id', req.params.id).select());
     if (!data.length) return res.status(404).json({ error: 'Véhicule introuvable' });
     res.json({ car: data[0] });
   } catch (err) {
@@ -103,8 +100,7 @@ router.patch('/cars/:id', async (req, res, next) => {
 /** DELETE /admin/cars/:id */
 router.delete('/cars/:id', async (req, res, next) => {
   try {
-    const { data, error } = await supabase.from('cars').delete().eq('id', req.params.id).select();
-    if (error) throw new Error(error.message);
+    const data = await run(supabase.from('cars').delete().eq('id', req.params.id).select());
     if (!data.length) return res.status(404).json({ error: 'Véhicule introuvable' });
     res.json({ deleted: data[0].id });
   } catch (err) {
