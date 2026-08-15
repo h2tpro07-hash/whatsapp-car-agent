@@ -15,6 +15,9 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Render n'a pas de sortie IPv6 : force la résolution IPv4 (sinon `fetch failed`).
+      - key: NODE_OPTIONS
+        value: --dns-result-order=ipv4first
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY

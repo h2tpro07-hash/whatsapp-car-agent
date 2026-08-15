@@ -2,6 +2,12 @@
  * Agent WhatsApp pour marchand de voitures d'occasion.
  * Flux : WhatsApp -> POST /webhook -> mots-clés -> Supabase -> Groq (Llama 3) -> réponse.
  */
+// Doit rester en tête : certains hébergeurs (Render) n'ont pas de sortie IPv6,
+// et Node >= 18 tente l'AAAA en premier -> `TypeError: fetch failed`.
+const dns = require('dns');
+
+dns.setDefaultResultOrder('ipv4first');
+
 require('dotenv').config();
 
 const fs = require('fs');
@@ -165,6 +171,8 @@ app.listen(PORT, () => {
       ? `ADMIN_API_KEY chargée (${adminKey.trim().length} caractères)`
       : 'ATTENTION: ADMIN_API_KEY absente, /admin/cars répondra 500'
   );
+
+  console.log(`Résolution DNS: ${dns.getDefaultResultOrder()}`);
 
   // Diagnostic Supabase au démarrage (visible dans les logs Render).
   checkConnection().then(({ ok, url, error }) =>

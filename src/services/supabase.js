@@ -2,8 +2,15 @@
  * Accès Supabase via le client officiel @supabase/supabase-js.
  * Compatible avec les deux formats de clé : `sb_secret_...` (nouveau) et JWT `eyJ...` (legacy).
  */
+const dns = require('dns');
+
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
+
+// Sur Render (et tout hôte sans sortie IPv6), l'AAAA de Supabase est injoignable
+// et `fetch` échoue en `TypeError: fetch failed` : on privilégie l'IPv4.
+// Répété ici pour les scripts qui chargent ce module sans passer par server.js.
+dns.setDefaultResultOrder('ipv4first');
 
 // Node < 22 n'expose pas WebSocket globalement, requis par @supabase/realtime-js.
 if (typeof globalThis.WebSocket === 'undefined') {
@@ -83,7 +90,8 @@ function networkError(err) {
   const cause = err.cause?.cause?.code || err.cause?.code || err.code || err.message;
   return new Error(
     `Connexion à Supabase impossible (${SUPABASE_URL}) : ${cause}. ` +
-      'Vérifie SUPABASE_URL (URL REST du projet) et que le projet Supabase est actif.'
+      'Vérifie SUPABASE_URL (URL REST du projet), que le projet Supabase est actif, ' +
+      'et sur un hôte sans IPv6 que NODE_OPTIONS=--dns-result-order=ipv4first est bien pris en compte.'
   );
 }
 
