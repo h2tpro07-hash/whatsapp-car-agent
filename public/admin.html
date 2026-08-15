@@ -17,7 +17,7 @@
       </div>
       <input id="login-key" type="password" autocomplete="current-password" placeholder="Clé admin"
              class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
-      <p id="login-error" class="hidden text-sm text-red-600">Clé invalide.</p>
+      <p id="login-error" class="hidden text-sm text-red-600"></p>
       <button type="submit" class="w-full bg-slate-900 text-white rounded-lg py-2 font-medium hover:bg-slate-700">
         Se connecter
       </button>
@@ -103,8 +103,8 @@ async function api(path, options = {}) {
     ...options,
     headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey, ...(options.headers || {}) },
   });
-  if (res.status === 401) { logout(); throw new Error('Clé admin invalide'); }
   const json = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout(); throw new Error(json.error || 'Clé admin invalide'); }
   if (!res.ok) throw new Error(json.error || 'Erreur serveur');
   return json;
 }
@@ -120,8 +120,10 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     await api('/cars');
     sessionStorage.setItem(KEY_STORE, adminKey);
     showApp();
-  } catch {
-    document.getElementById('login-error').classList.remove('hidden');
+  } catch (err) {
+    const el = document.getElementById('login-error');
+    el.textContent = err.message;
+    el.classList.remove('hidden');
   }
 });
 

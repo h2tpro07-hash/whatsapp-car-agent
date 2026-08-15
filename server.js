@@ -159,6 +159,13 @@ app.listen(PORT, () => {
       : `ATTENTION: ${adminPage} introuvable, /admin renverra une erreur`
   );
 
+  const adminKey = String(process.env.ADMIN_API_KEY || '');
+  console.log(
+    adminKey.trim()
+      ? `ADMIN_API_KEY chargée (${adminKey.trim().length} caractères)`
+      : 'ATTENTION: ADMIN_API_KEY absente, /admin/cars répondra 500'
+  );
+
   // Diagnostic Supabase au démarrage (visible dans les logs Render).
   checkConnection().then(({ ok, url, error }) =>
     console.log(ok ? `Supabase connecté (${url})` : `ATTENTION Supabase: ${error}`)

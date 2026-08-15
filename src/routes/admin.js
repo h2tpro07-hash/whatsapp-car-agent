@@ -2,6 +2,8 @@
  * API d'administration du stock : CRUD sur la table `cars`.
  * Protégée par l'en-tête `x-admin-key` (variable ADMIN_API_KEY).
  */
+const crypto = require('crypto');
+
 const express = require('express');
 
 const { supabase, run } = require('../services/supabase');
@@ -12,11 +14,37 @@ const ALLOWED_FIELDS = ['brand', 'model', 'year', 'price', 'mileage', 'fuel', 'd
 const REQUIRED_FIELDS = ['brand', 'model', 'year', 'price', 'mileage', 'fuel'];
 const ALLOWED_STATUS = ['available', 'reserved', 'sold'];
 
+/**
+ * Nettoie une clé : espaces, retours à la ligne et guillemets ajoutés par
+ * un copier-coller ou par le dashboard Render.
+ */
+function normalizeKey(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .trim();
+}
+
+/** Comparaison à temps constant, insensible à la longueur. */
+function keysMatch(a, b) {
+  const bufA = crypto.createHash('sha256').update(a).digest();
+  const bufB = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 /** Authentification par clé partagée. */
 router.use((req, res, next) => {
-  const expected = process.env.ADMIN_API_KEY;
+  const expected = normalizeKey(process.env.ADMIN_API_KEY);
   if (!expected) return res.status(500).json({ error: 'ADMIN_API_KEY non configurée sur le serveur' });
-  if (req.get('x-admin-key') !== expected) return res.status(401).json({ error: 'Non autorisé' });
+
+  const provided = normalizeKey(req.get('x-admin-key'));
+  if (!provided) return res.status(401).json({ error: 'Clé admin manquante (en-tête x-admin-key)' });
+  if (!keysMatch(provided, expected)) {
+    console.warn(
+      `Admin: clé refusée (reçue ${provided.length} caractères, attendue ${expected.length})`
+    );
+    return res.status(401).json({ error: 'Clé admin invalide' });
+  }
   return next();
 });
 
