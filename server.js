@@ -4,6 +4,8 @@
  */
 require('dotenv').config();
 
+const path = require('path');
+
 const express = require('express');
 
 const { findCars, listAvailableCars } = require('./src/services/supabase');
@@ -21,7 +23,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Console d'administration du stock (protégée par x-admin-key).
+// Interface web d'administration (la page demande la clé, l'API la vérifie).
+app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+
+// API d'administration du stock (protégée par x-admin-key).
 app.use('/admin', adminRouter);
 
 /** Healthcheck : indique aussi quels canaux sortants sont configurés. */

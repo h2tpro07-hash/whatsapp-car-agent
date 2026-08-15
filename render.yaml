@@ -1,0 +1,39 @@
+# Déploiement en un clic sur Render (https://render.com)
+# Dashboard > New > Blueprint > sélectionner ce repo.
+# Les variables marquées `sync: false` sont à saisir dans l'UI Render au déploiement.
+services:
+  - type: web
+    name: whatsapp-car-agent
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instant
+      # Clé de l'interface d'admin : générée automatiquement par Render.
+      # La récupérer dans Environment > ADMIN_API_KEY pour se connecter à /admin.
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: REPLY_MODE
+        value: twiml
+      - key: VALIDATE_TWILIO_SIGNATURE
+        value: "false"
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false

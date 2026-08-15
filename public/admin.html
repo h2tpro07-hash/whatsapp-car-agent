@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin stock — Agent WhatsApp</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+  <!-- ================== ÉCRAN DE CONNEXION ================== -->
+  <div id="login" class="min-h-screen flex items-center justify-center p-4">
+    <form id="login-form" class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-8 space-y-5">
+      <div>
+        <h1 class="text-xl font-bold">Administration du stock</h1>
+        <p class="text-sm text-slate-500 mt-1">Entrez la clé admin (ADMIN_API_KEY).</p>
+      </div>
+      <input id="login-key" type="password" autocomplete="current-password" placeholder="Clé admin"
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
+      <p id="login-error" class="hidden text-sm text-red-600">Clé invalide.</p>
+      <button type="submit" class="w-full bg-slate-900 text-white rounded-lg py-2 font-medium hover:bg-slate-700">
+        Se connecter
+      </button>
+    </form>
+  </div>
+
+  <!-- ================== APPLICATION ================== -->
+  <div id="app" class="hidden max-w-6xl mx-auto p-4 sm:p-8 space-y-8">
+
+    <header class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold">Stock véhicules</h1>
+        <p class="text-sm text-slate-500">Agent WhatsApp — les véhicules « disponible » sont proposés aux clients.</p>
+      </div>
+      <button id="logout" class="text-sm text-slate-600 hover:text-slate-900 underline">Déconnexion</button>
+    </header>
+
+    <!-- Compteurs -->
+    <section id="stats" class="grid grid-cols-3 gap-4"></section>
+
+    <!-- Formulaire d'ajout -->
+    <section class="bg-white rounded-2xl shadow p-6">
+      <h2 class="font-semibold mb-4">Ajouter un véhicule</h2>
+      <form id="car-form" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <input name="brand" required placeholder="Marque *" class="rounded-lg border border-slate-300 px-3 py-2" />
+        <input name="model" required placeholder="Modèle *" class="rounded-lg border border-slate-300 px-3 py-2" />
+        <input name="year" required type="number" min="1950" max="2100" placeholder="Année *" class="rounded-lg border border-slate-300 px-3 py-2" />
+        <input name="price" required type="number" min="0" step="50" placeholder="Prix (€) *" class="rounded-lg border border-slate-300 px-3 py-2" />
+        <input name="mileage" required type="number" min="0" placeholder="Kilométrage *" class="rounded-lg border border-slate-300 px-3 py-2" />
+        <select name="fuel" required class="rounded-lg border border-slate-300 px-3 py-2 bg-white">
+          <option value="">Carburant *</option>
+          <option>Essence</option><option>Diesel</option><option>Hybride</option>
+          <option>Électrique</option><option>GPL</option>
+        </select>
+        <textarea name="description" rows="2" placeholder="Description (options, entretien...)"
+                  class="sm:col-span-3 rounded-lg border border-slate-300 px-3 py-2"></textarea>
+        <div class="sm:col-span-3 flex items-center gap-3">
+          <button type="submit" class="bg-slate-900 text-white rounded-lg px-5 py-2 font-medium hover:bg-slate-700">
+            Ajouter au stock
+          </button>
+          <span id="form-msg" class="text-sm"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- Tableau du stock -->
+    <section class="bg-white rounded-2xl shadow overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-left">
+          <tr>
+            <th class="px-4 py-3">Véhicule</th>
+            <th class="px-4 py-3">Année</th>
+            <th class="px-4 py-3">Prix</th>
+            <th class="px-4 py-3">Km</th>
+            <th class="px-4 py-3">Carburant</th>
+            <th class="px-4 py-3">Statut</th>
+            <th class="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="cars-body" class="divide-y divide-slate-100"></tbody>
+      </table>
+      <p id="empty" class="hidden p-8 text-center text-slate-400">Aucun véhicule en stock.</p>
+    </section>
+  </div>
+
+<script>
+// ---------- État & helpers ----------
+const KEY_STORE = 'adminKey';
+let adminKey = sessionStorage.getItem(KEY_STORE) || '';
+
+const STATUS = {
+  available: { label: 'Disponible', cls: 'bg-emerald-100 text-emerald-700' },
+  reserved:  { label: 'Réservée',   cls: 'bg-amber-100 text-amber-700' },
+  sold:      { label: 'Vendue',     cls: 'bg-slate-200 text-slate-600' },
+};
+
+const euro = (n) => Number(n).toLocaleString('fr-FR') + ' €';
+const km = (n) => Number(n).toLocaleString('fr-FR') + ' km';
+
+/** Appel API authentifié. */
+async function api(path, options = {}) {
+  const res = await fetch('/admin' + path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey, ...(options.headers || {}) },
+  });
+  if (res.status === 401) { logout(); throw new Error('Clé admin invalide'); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || 'Erreur serveur');
+  return json;
+}
+
+// ---------- Connexion ----------
+const loginEl = document.getElementById('login');
+const appEl = document.getElementById('app');
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  adminKey = document.getElementById('login-key').value.trim();
+  try {
+    await api('/cars');
+    sessionStorage.setItem(KEY_STORE, adminKey);
+    showApp();
+  } catch {
+    document.getElementById('login-error').classList.remove('hidden');
+  }
+});
+
+function logout() {
+  sessionStorage.removeItem(KEY_STORE);
+  adminKey = '';
+  appEl.classList.add('hidden');
+  loginEl.classList.remove('hidden');
+}
+document.getElementById('logout').addEventListener('click', logout);
+
+function showApp() {
+  loginEl.classList.add('hidden');
+  appEl.classList.remove('hidden');
+  loadCars();
+}
+
+// ---------- Affichage du stock ----------
+async function loadCars() {
+  const { cars } = await api('/cars');
+  const body = document.getElementById('cars-body');
+  body.innerHTML = '';
+
+  cars.forEach((car) => {
+    const s = STATUS[car.status] || STATUS.available;
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-50';
+    tr.innerHTML = `
+      <td class="px-4 py-3">
+        <div class="font-medium">${car.brand} ${car.model}</div>
+        <div class="text-xs text-slate-400 line-clamp-1">${car.description || ''}</div>
+      </td>
+      <td class="px-4 py-3">${car.year}</td>
+      <td class="px-4 py-3 font-medium">${euro(car.price)}</td>
+      <td class="px-4 py-3">${km(car.mileage)}</td>
+      <td class="px-4 py-3">${car.fuel}</td>
+      <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-medium ${s.cls}">${s.label}</span></td>
+      <td class="px-4 py-3">
+        <div class="flex justify-end gap-2">
+          <select data-status="${car.id}" class="rounded-lg border border-slate-300 px-2 py-1 text-xs bg-white">
+            ${Object.entries(STATUS).map(([v, o]) =>
+              `<option value="${v}" ${v === car.status ? 'selected' : ''}>${o.label}</option>`).join('')}
+          </select>
+          <button data-delete="${car.id}" class="text-red-600 hover:text-red-800 text-xs font-medium">Supprimer</button>
+        </div>
+      </td>`;
+    body.appendChild(tr);
+  });
+
+  document.getElementById('empty').classList.toggle('hidden', cars.length > 0);
+  renderStats(cars);
+}
+
+function renderStats(cars) {
+  const counts = {
+    available: cars.filter((c) => c.status === 'available').length,
+    reserved: cars.filter((c) => c.status === 'reserved').length,
+    sold: cars.filter((c) => c.status === 'sold').length,
+  };
+  document.getElementById('stats').innerHTML = Object.entries(counts).map(([k, v]) => `
+    <div class="bg-white rounded-2xl shadow p-4">
+      <div class="text-2xl font-bold">${v}</div>
+      <div class="text-xs text-slate-500">${STATUS[k].label}${v > 1 ? 's' : ''}</div>
+    </div>`).join('');
+}
+
+// ---------- Actions du tableau (délégation d'événements) ----------
+document.getElementById('cars-body').addEventListener('change', async (e) => {
+  const id = e.target.dataset.status;
+  if (!id) return;
+  await api('/cars/' + id, { method: 'PATCH', body: JSON.stringify({ status: e.target.value }) });
+  loadCars();
+});
+
+document.getElementById('cars-body').addEventListener('click', async (e) => {
+  const id = e.target.dataset.delete;
+  if (!id) return;
+  if (!confirm('Supprimer ce véhicule ?')) return;
+  await api('/cars/' + id, { method: 'DELETE' });
+  loadCars();
+});
+
+// ---------- Ajout ----------
+document.getElementById('car-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById('form-msg');
+  const payload = Object.fromEntries(new FormData(e.target).entries());
+
+  try {
+    await api('/cars', { method: 'POST', body: JSON.stringify(payload) });
+    e.target.reset();
+    msg.textContent = 'Véhicule ajouté.';
+    msg.className = 'text-sm text-emerald-600';
+    loadCars();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'text-sm text-red-600';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 4000);
+});
+
+// Session déjà ouverte ?
+if (adminKey) api('/cars').then(showApp).catch(logout);
+</script>
+</body>
+</html>

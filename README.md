@@ -72,7 +72,11 @@ curl -X POST http://localhost:3000/webhook \
 
 Dans Postman : `POST http://localhost:3000/webhook`, body `raw / JSON` = `{"message":"..."}`.
 
-## Endpoint d'admin (gestion du stock)
+## Interface web d'administration
+
+`http://localhost:3000/admin` — page unique (Tailwind CDN, sans build) : connexion par la clé `ADMIN_API_KEY`, compteurs disponible/réservée/vendue, tableau du stock, formulaire d'ajout, changement de statut et suppression en un clic. La clé est gardée en `sessionStorage` et envoyée à chaque appel dans `x-admin-key`.
+
+## API d'admin (gestion du stock)
 
 Protégé par l'en-tête `x-admin-key` (= `ADMIN_API_KEY` du `.env`).
 
@@ -113,3 +117,18 @@ En production, mettre `PUBLIC_URL=https://ton-domaine` et `VALIDATE_TWILIO_SIGNA
 ### Meta / WhatsApp Cloud API
 
 Callback URL = `https://xxxx.ngrok-free.app/webhook`, Verify token = `WHATSAPP_VERIFY_TOKEN`. Renseigner `WHATSAPP_TOKEN` et `WHATSAPP_PHONE_NUMBER_ID` : le webhook accuse réception en 200 puis envoie la réponse via l'API Graph.
+
+## Déploiement gratuit sur Render
+
+1. Render.com > **New > Blueprint** > choisir le repo : `render.yaml` est détecté (plan free, région Frankfurt, healthcheck sur `/`).
+2. Saisir les variables `sync: false` : `SUPABASE_URL`, `SUPABASE_KEY`, `GROQ_API_KEY` (+ Twilio si utilisé). `ADMIN_API_KEY` est générée automatiquement — la récupérer dans Environment pour se connecter à `/admin`.
+3. Déployer, puis mettre `https://<ton-service>.onrender.com/webhook` comme webhook Twilio, et `PUBLIC_URL` + `VALIDATE_TWILIO_SIGNATURE=true` en prod.
+
+Alternative Docker (Railway, Fly.io, VPS) : `Dockerfile` fourni.
+
+```bash
+docker build -t whatsapp-car-agent .
+docker run --env-file .env -p 3000:3000 whatsapp-car-agent
+```
+
+Note : le plan free Render met le service en veille après inactivité — le premier message WhatsApp peut mettre ~30 s à recevoir une réponse.
