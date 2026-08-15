@@ -4,6 +4,7 @@
  */
 require('dotenv').config();
 
+const fs = require('fs');
 const path = require('path');
 
 const express = require('express');
@@ -23,8 +24,14 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Fichiers statiques (admin.html, futurs assets) : /admin.html, /favicon.ico, ...
+const PUBLIC_DIR = path.join(__dirname, 'public');
+app.use(express.static(PUBLIC_DIR));
+
 // Interface web d'administration (la page demande la clé, l'API la vérifie).
-app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get(['/admin', '/admin/', '/admin/index.html'], (_req, res, next) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'admin.html'), (err) => (err ? next(err) : undefined));
+});
 
 // API d'administration du stock (protégée par x-admin-key).
 app.use('/admin', adminRouter);
@@ -128,12 +135,29 @@ app.post('/webhook', twilioService.verifyTwilioSignature, async (req, res) => {
   }
 });
 
+/** 404 explicite : évite un « Not Found » opaque en production. */
+app.use((req, res) => {
+  res.status(404).json({
+    error: `Route introuvable: ${req.method} ${req.originalUrl}`,
+    routes: ['GET /', 'GET /admin', 'GET|POST /webhook', 'GET|POST /admin/cars', 'PATCH|DELETE /admin/cars/:id'],
+  });
+});
+
 /** Gestionnaire d'erreurs (routes /admin). */
 app.use((err, _req, res, _next) => {
   console.error('[ERR]', err);
   res.status(500).json({ error: err.message });
 });
 
-app.listen(PORT, () => console.log(`Serveur démarré sur http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Serveur démarré sur le port ${PORT}`);
+  // Aide au diagnostic en production (Render/Docker) : la page admin est-elle bien déployée ?
+  const adminPage = path.join(PUBLIC_DIR, 'admin.html');
+  console.log(
+    fs.existsSync(adminPage)
+      ? `Interface admin disponible sur /admin (${adminPage})`
+      : `ATTENTION: ${adminPage} introuvable, /admin renverra une erreur`
+  );
+});
 
 module.exports = app;
