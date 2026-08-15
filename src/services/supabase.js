@@ -2,6 +2,12 @@
  * Accès Supabase : recherche des véhicules.
  */
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
+
+// Node < 22 n'expose pas WebSocket globalement, requis par @supabase/realtime-js.
+if (typeof globalThis.WebSocket === 'undefined') {
+  globalThis.WebSocket = ws;
+}
 
 const { SUPABASE_URL, SUPABASE_KEY } = process.env;
 
@@ -12,6 +18,8 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 // Client backend : pas de session utilisateur à persister.
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
+  // Node < 22 n'a pas de WebSocket natif, requis par le module realtime.
+  realtime: { transport: ws },
 });
 
 /**
