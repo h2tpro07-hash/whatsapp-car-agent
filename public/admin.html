@@ -89,9 +89,9 @@ const KEY_STORE = 'adminKey';
 let adminKey = sessionStorage.getItem(KEY_STORE) || '';
 
 const STATUS = {
-  available: { label: 'Disponible', cls: 'bg-emerald-100 text-emerald-700' },
-  reserved:  { label: 'Réservée',   cls: 'bg-amber-100 text-amber-700' },
-  sold:      { label: 'Vendue',     cls: 'bg-slate-200 text-slate-600' },
+  available: { label: 'Disponible', plural: 'Disponibles', cls: 'bg-emerald-100 text-emerald-700' },
+  reserved:  { label: 'Réservée',   plural: 'Réservées',   cls: 'bg-amber-100 text-amber-700' },
+  sold:      { label: 'Vendue',     plural: 'Vendues',     cls: 'bg-slate-200 text-slate-600' },
 };
 
 const euro = (n) => Number(n).toLocaleString('fr-FR') + ' €';
@@ -184,7 +184,7 @@ function renderStats(cars) {
   document.getElementById('stats').innerHTML = Object.entries(counts).map(([k, v]) => `
     <div class="bg-white rounded-2xl shadow p-4">
       <div class="text-2xl font-bold">${v}</div>
-      <div class="text-xs text-slate-500">${STATUS[k].label}${v > 1 ? 's' : ''}</div>
+      <div class="text-xs text-slate-500">${v > 1 ? STATUS[k].plural : STATUS[k].label}</div>
     </div>`).join('');
 }
 
