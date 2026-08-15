@@ -14,6 +14,9 @@ whatsapp-car-agent/
     ├── services/supabase.js   # Requêtes véhicules
     ├── services/ai.js         # Prompt système + appel Groq
     ├── services/whatsapp.js   # Parsing entrant (Twilio/Meta) + TwiML + formatage
+    ├── services/twilio.js     # Envoi sortant Twilio + validation de signature
+    ├── services/meta.js       # Envoi sortant WhatsApp Cloud API
+    ├── routes/admin.js        # CRUD /admin/cars (clé x-admin-key)
     └── utils/extract.js       # Extraction des mots-clés (marque/modèle)
 ```
 
@@ -69,7 +72,44 @@ curl -X POST http://localhost:3000/webhook \
 
 Dans Postman : `POST http://localhost:3000/webhook`, body `raw / JSON` = `{"message":"..."}`.
 
-## Brancher WhatsApp
+## Endpoint d'admin (gestion du stock)
 
-- **Twilio** : exposer le port (`ngrok http 3000`) puis mettre `https://xxxx.ngrok.io/webhook` dans Sandbox WhatsApp > "When a message comes in" (POST). Le serveur renvoie directement le TwiML, rien d'autre à faire.
-- **Meta Cloud API** : même URL en Callback URL, `WHATSAPP_VERIFY_TOKEN` dans `.env` pour la vérification `GET /webhook` (l'envoi sortant se fait alors via l'API Graph).
+Protégé par l'en-tête `x-admin-key` (= `ADMIN_API_KEY` du `.env`).
+
+| Méthode | Route | Rôle |
+| --- | --- | --- |
+| `GET` | `/admin/cars?status=available` | Lister le stock |
+| `POST` | `/admin/cars` | Ajouter un véhicule (objet **ou** tableau) |
+| `PATCH` | `/admin/cars/:id` | Modifier (ex. passer en `sold`) |
+| `DELETE` | `/admin/cars/:id` | Supprimer |
+
+```bash
+curl -X POST http://localhost:3000/admin/cars \
+  -H "x-admin-key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"brand":"Toyota","model":"Yaris","year":2020,"price":13500,"mileage":52000,"fuel":"Hybride","description":"Yaris hybride 116h Dynamic"}'
+
+curl -X PATCH http://localhost:3000/admin/cars/4 \
+  -H "x-admin-key: $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{"status":"sold"}'
+```
+
+Champs obligatoires : `brand`, `model`, `year`, `price`, `mileage`, `fuel`. `status` ∈ `available|reserved|sold`. Un véhicule non `available` n'est plus proposé par l'agent.
+
+## Brancher WhatsApp (vrais messages)
+
+### Twilio (le plus rapide)
+
+1. Console Twilio > Messaging > Try it out > **Send a WhatsApp message** : rejoindre la sandbox depuis ton téléphone (`join <code>` au +1 415 523 8886).
+2. Renseigner dans `.env` : `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM=+14155238886`.
+3. Exposer le serveur : `ngrok http 3000` → copier l'URL `https://xxxx.ngrok-free.app`.
+4. Sandbox settings > **When a message comes in** : `https://xxxx.ngrok-free.app/webhook`, méthode `POST`. Sauvegarder.
+5. Envoyer un message WhatsApp au numéro sandbox : l'agent répond.
+
+Deux modes de réponse (`REPLY_MODE`) :
+- `twiml` (défaut) — la réponse part dans la réponse HTTP du webhook, aucun appel API, aucune clé requise ;
+- `api` — envoi explicite via l'API Twilio (`client.messages.create`), utile pour les messages proactifs/relances.
+
+En production, mettre `PUBLIC_URL=https://ton-domaine` et `VALIDATE_TWILIO_SIGNATURE=true` : les requêtes non signées par Twilio sont rejetées (403).
+
+### Meta / WhatsApp Cloud API
+
+Callback URL = `https://xxxx.ngrok-free.app/webhook`, Verify token = `WHATSAPP_VERIFY_TOKEN`. Renseigner `WHATSAPP_TOKEN` et `WHATSAPP_PHONE_NUMBER_ID` : le webhook accuse réception en 200 puis envoie la réponse via l'API Graph.
