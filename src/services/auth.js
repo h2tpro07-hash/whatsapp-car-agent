@@ -54,4 +54,34 @@ function requireVertical(vertical) {
   };
 }
 
-module.exports = { requireGarageAuth, requireVertical };
+/**
+ * Middleware Express : exige une session Supabase Auth valide ET une entrée
+ * dans la table `superadmins` (alimentée manuellement en SQL, jamais via UI).
+ * Attache `req.userId`.
+ */
+async function requireSuperAdmin(req, res, next) {
+  try {
+    const header = req.get('authorization') || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (!token) {
+      return res.status(401).json({ error: 'Authentification requise (en-tête Authorization: Bearer <token>)' });
+    }
+
+    const { data: userData, error: userError } = await supabase.auth.getUser(token);
+    if (userError || !userData?.user) {
+      return res.status(401).json({ error: 'Session invalide ou expirée, reconnectez-vous' });
+    }
+
+    const admin = await run(
+      supabase.from('superadmins').select('user_id').eq('user_id', userData.user.id).maybeSingle()
+    );
+    if (!admin) return res.status(403).json({ error: 'Accès super-admin requis' });
+
+    req.userId = userData.user.id;
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { requireGarageAuth, requireVertical, requireSuperAdmin };

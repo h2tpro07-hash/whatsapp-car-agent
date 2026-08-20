@@ -44,3 +44,13 @@ services:
         sync: false
       - key: TWILIO_WHATSAPP_FROM
         sync: false
+      # URL publique du service (https://<ton-service>.onrender.com), nécessaire
+      # au provisioning Twilio par garage et aux retours Stripe Checkout.
+      - key: PUBLIC_URL
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false

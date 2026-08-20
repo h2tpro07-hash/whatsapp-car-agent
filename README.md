@@ -2,7 +2,7 @@
 
 Express + Supabase (PostgreSQL + Auth) + Groq (Llama 3). Plateforme **multi-garages** : chaque garage a son métier (vente de véhicules d'occasion ou réparation/mécanique), son compte admin, ses données isolées. Zéro service payant hors API.
 
-> **État actuel (v2, Phase 0+1)** : le modèle de données, l'authentification et les deux métiers sont multi-tenant. Un seul numéro WhatsApp par déploiement reste branché sur un garage désigné par `DEFAULT_GARAGE_ID` — le routing d'un numéro Twilio dédié par garage et la facturation Stripe arrivent dans une phase suivante.
+> **État actuel (v3, Phase 0 à 2)** : modèle de données, authentification, deux métiers, numéro WhatsApp dédié par garage (Twilio) et facturation Stripe sont en place. L'inscription en ligne self-service n'existe pas encore — l'onboarding d'un garage se fait manuellement via le panneau **`/superadmin`** (créer le garage, générer son lien de paiement, provisionner son numéro). Le garage pilote historique continue de fonctionner via `DEFAULT_GARAGE_ID` (repli si aucun numéro dédié ne correspond).
 
 ## Structure
 
@@ -12,17 +12,21 @@ whatsapp-car-agent/
 ├── package.json
 ├── .env.example
 ├── sql/
-│   ├── schema.sql                # Schéma complet multi-garages (projet neuf) + données de démo
-│   └── migrate_v2_multi_tenant.sql  # Migration pour un projet v1 existant (mono-garage -> multi-garages)
+│   ├── schema.sql                       # Schéma complet multi-garages (projet neuf) + données de démo
+│   ├── migrate_v2_multi_tenant.sql      # Migration v1 -> v2 (mono-garage -> multi-garages)
+│   └── migrate_v3_billing_provisioning.sql  # Migration v2 -> v3 (numéros Twilio par garage + Stripe)
 └── src/
     ├── services/supabase.js      # Requêtes véhicules (vente) et services/RDV (réparation), scopées par garage_id
     ├── services/ai.js            # Prompt système par métier (vente / réparation) + appel Groq
-    ├── services/auth.js          # Vérifie le JWT Supabase Auth, résout le garage de l'utilisateur connecté
-    ├── services/tenant.js        # Résout le garage destinataire d'un message WhatsApp entrant
+    ├── services/auth.js          # Vérifie le JWT Supabase Auth (garage_id et super-admin)
+    ├── services/tenant.js        # Résout le garage destinataire d'un message WhatsApp (par numéro, repli DEFAULT_GARAGE_ID)
     ├── services/whatsapp.js      # Parsing entrant (Twilio/Meta) + TwiML + formatage
-    ├── services/twilio.js        # Envoi sortant Twilio + validation de signature
+    ├── services/twilio.js        # Envoi sortant Twilio (par garage) + validation de signature
+    ├── services/twilioProvisioning.js  # Sous-compte + achat de numéro FR par garage
+    ├── services/stripeBilling.js # Lien de paiement Checkout + traitement des webhooks Stripe
     ├── services/meta.js          # Envoi sortant WhatsApp Cloud API
     ├── routes/admin.js           # CRUD /admin/{cars|services|appointments|quotes}, scopé par garage
+    ├── routes/superadmin.js      # Pilotage manuel des garages (création, paiement, provisioning, statut)
     └── utils/extract.js          # Extraction des mots-clés (marque/modèle, ou nom de service)
 ```
 
@@ -157,10 +161,30 @@ En production, mettre `PUBLIC_URL=https://ton-domaine` et `VALIDATE_TWILIO_SIGNA
 
 Callback URL = `https://xxxx.ngrok-free.app/webhook`, Verify token = `WHATSAPP_VERIFY_TOKEN`. Renseigner `WHATSAPP_TOKEN` et `WHATSAPP_PHONE_NUMBER_ID` : le webhook accuse réception en 200 puis envoie la réponse via l'API Graph.
 
+## Numéro WhatsApp dédié + facturation par garage (`/superadmin`)
+
+Tant que l'inscription en ligne n'existe pas, c'est vous qui onboardez chaque garage via `http://localhost:3000/superadmin` (même principe que `/admin` : connexion par compte Supabase Auth, mais réservé aux comptes présents dans la table `superadmins`).
+
+**Prérequis** (à faire une seule fois, dans vos propres comptes — jamais via ce projet) :
+- **Twilio** : passer le compte en payant (carte enregistrée) — le sandbox gratuit ne permet pas d'acheter de numéros ni de créer des sous-comptes fonctionnels.
+- **Stripe** : créer un compte (gratuit, le mode test ne demande aucune info bancaire), récupérer les clés API **test** (`STRIPE_SECRET_KEY`), créer un produit "Abonnement mensuel" avec un prix récurrent et copier son id (`STRIPE_PRICE_ID`).
+- **Webhook Stripe** : Dashboard Stripe > Developers > Webhooks > Add endpoint > URL `https://<ton-service>/stripe/webhook`, événements `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Copier le "Signing secret" (`STRIPE_WEBHOOK_SECRET`).
+- `PUBLIC_URL` doit être renseigné (sert au webhook des numéros provisionnés et aux retours Stripe Checkout).
+
+**Migration base de données** : exécuter `sql/migrate_v3_billing_provisioning.sql` (nouveau projet : déjà inclus dans `sql/schema.sql`).
+
+**Utilisation** :
+1. Créer le garage (nom + métier) depuis `/superadmin`.
+2. Cliquer **"Lien de paiement"** : génère une URL Stripe Checkout à envoyer au garage (email, WhatsApp...). Une fois payé, le webhook active automatiquement le garage (`status: active`).
+3. Cliquer **"Provisionner WhatsApp"** : achète un numéro français dédié sous un nouveau sous-compte Twilio. ⚠️ L'achat du numéro est automatique, mais son **activation comme expéditeur WhatsApp** (profil d'entreprise, validation Meta) peut nécessiter une action manuelle dans la Console Twilio et prendre jusqu'à 24-48h — c'est normal, pas une erreur.
+4. Une fois l'activation confirmée dans Twilio, cliquer **"Marquer actif"** pour que le numéro commence à router les messages vers ce garage.
+
+Si un abonnement passe en impayé/suspendu, `garages.status` est automatiquement recalculé par le webhook Stripe et l'agent WhatsApp répond un message de repli fixe au lieu d'appeler l'IA.
+
 ## Déploiement gratuit sur Render
 
 1. Render.com > **New > Blueprint** > choisir le repo : `render.yaml` est détecté (plan free, région Frankfurt, healthcheck sur `/`).
-2. Saisir les variables : `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_ANON_KEY`, `GROQ_API_KEY`, `DEFAULT_GARAGE_ID` (+ Twilio si utilisé).
+2. Saisir les variables : `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_ANON_KEY`, `GROQ_API_KEY`, `DEFAULT_GARAGE_ID` (+ Twilio, Stripe et `PUBLIC_URL` si utilisés).
 3. Déployer, puis mettre `https://<ton-service>.onrender.com/webhook` comme webhook Twilio, et `PUBLIC_URL` + `VALIDATE_TWILIO_SIGNATURE=true` en prod.
 
 Alternative Docker (Railway, Fly.io, VPS) : `Dockerfile` fourni.
@@ -174,8 +198,5 @@ Note : le plan free Render met le service en veille après inactivité — le pr
 
 ## Feuille de route (multi-garages, abonnement mensuel)
 
-Cette version (v2) livre les fondations multi-tenant : modèle de données par garage, authentification par compte, deux métiers configurables (vente / réparation). Les phases suivantes, à enchaîner une fois vos comptes Stripe/Twilio prêts :
-- **Numéro WhatsApp dédié par garage** — un sous-compte Twilio + un numéro par garage, routage automatique des messages entrants selon le numéro appelé.
-- **Facturation Stripe** — abonnement mensuel, coupure automatique de l'agent WhatsApp en cas d'impayé.
-- **Inscription en ligne self-service** — un garage s'inscrit, paie, et reçoit son agent configuré sans intervention manuelle.
-- **Panneau super-admin** — vue d'ensemble de tous les garages clients, actions manuelles de secours.
+Fondations livrées : modèle de données par garage, authentification par compte, deux métiers configurables (vente / réparation), numéro WhatsApp dédié par garage (Twilio), facturation Stripe, panneau super-admin pour l'onboarding manuel. Reste à construire :
+- **Inscription en ligne self-service** — un garage s'inscrit seul, paie, et reçoit son agent configuré sans intervention manuelle (le panneau `/superadmin` fait aujourd'hui ce travail à votre place). À construire une fois la mécanique Twilio/Stripe validée sur quelques garages pilotes réels.

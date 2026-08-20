@@ -4,17 +4,20 @@
  */
 
 /**
- * Extrait { from, body, channel } quelle que soit la source.
+ * Extrait { from, to, body, channel } quelle que soit la source. `to` est
+ * le numéro WhatsApp appelé par le client — utilisé pour résoudre à quel
+ * garage ce message est destiné (voir services/tenant.js).
  * @param {import('express').Request} req
  */
 function parseIncoming(req) {
   const b = req.body || {};
 
-  // 1) Twilio : { From: 'whatsapp:+33...', Body: 'texte' }
+  // 1) Twilio : { From: 'whatsapp:+33...', To: 'whatsapp:+33...', Body: 'texte' }
   if (b.Body || b.From) {
     return {
       channel: 'twilio',
       from: (b.From || '').replace('whatsapp:', ''),
+      to: (b.To || '').replace('whatsapp:', ''),
       body: b.Body || '',
     };
   }
@@ -25,14 +28,16 @@ function parseIncoming(req) {
     return {
       channel: 'meta',
       from: msg.from || '',
+      to: b.entry?.[0]?.changes?.[0]?.value?.metadata?.display_phone_number || '',
       body: msg.text?.body || '',
     };
   }
 
-  // 3) Test manuel (cURL / Postman) : { from, message }
+  // 3) Test manuel (cURL / Postman) : { from, to, message }
   return {
     channel: 'test',
     from: b.from || 'test-user',
+    to: b.to || '',
     body: b.message || b.text || '',
   };
 }

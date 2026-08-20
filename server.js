@@ -30,10 +30,33 @@ const { parseIncoming, toTwiml, formatForWhatsApp } = require('./src/services/wh
 const twilioService = require('./src/services/twilio');
 const metaService = require('./src/services/meta');
 const adminRouter = require('./src/routes/admin');
+const superadminRouter = require('./src/routes/superadmin');
 const { resolveWebhookGarage } = require('./src/services/tenant');
+const stripeBilling = require('./src/services/stripeBilling');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Webhook Stripe : doit lire le corps BRUT (non parsé) pour vérifier la
+// signature -> enregistré avant express.json() global, uniquement sur ce chemin.
+app.post('/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  let event;
+  try {
+    event = stripeBilling.verifyWebhookSignature(req.body, req.get('stripe-signature'));
+  } catch (err) {
+    console.warn('[SECU] Signature Stripe invalide:', err.message);
+    return res.status(400).send(`Webhook signature invalide: ${err.message}`);
+  }
+
+  try {
+    await stripeBilling.handleWebhookEvent(event);
+    return res.json({ received: true });
+  } catch (err) {
+    console.error('[ERR] traitement webhook Stripe:', err);
+    // 500 -> Stripe réessaiera automatiquement.
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // Twilio envoie du form-urlencoded, Meta et Postman du JSON.
 app.use(express.json());
@@ -50,6 +73,12 @@ app.get(['/admin', '/admin/', '/admin/index.html'], (_req, res, next) => {
 
 // API d'administration (stock véhicules ou services/RDV selon le métier du garage).
 app.use('/admin', adminRouter);
+
+// Interface + API super-admin (pilotage de tous les garages, réservé à la table `superadmins`).
+app.get(['/superadmin', '/superadmin/', '/superadmin/index.html'], (_req, res, next) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'superadmin.html'), (err) => (err ? next(err) : undefined));
+});
+app.use('/superadmin', superadminRouter);
 
 /** Healthcheck : indique aussi quels canaux sortants sont configurés. */
 app.get('/', (_req, res) =>
@@ -129,20 +158,37 @@ async function buildAnswer(garage, message, from) {
  * - Twilio : réponse directe en TwiML (REPLY_MODE=twiml, défaut) ou via l'API (REPLY_MODE=api)
  * - Meta   : accusé de réception immédiat puis envoi via l'API Graph
  */
-app.post('/webhook', twilioService.verifyTwilioSignature, async (req, res) => {
-  const { channel, from, body } = parseIncoming(req);
-  console.log(`[IN ] ${channel} ${from}: ${body}`);
+app.post('/webhook', async (req, res) => {
+  const { channel, from, to, body } = parseIncoming(req);
+  console.log(`[IN ] ${channel} ${from} -> ${to}: ${body}`);
 
-  // Résout le garage destinataire (provisoire : un seul garage par déploiement, voir tenant.js).
+  // Résout le garage destinataire à partir du numéro appelé (repli sur DEFAULT_GARAGE_ID pour le garage pilote).
   let garage;
   try {
-    garage = await resolveWebhookGarage();
+    garage = await resolveWebhookGarage(to);
   } catch (err) {
     console.error('[ERR] résolution du garage:', err.message);
     const fallback = 'Service temporairement indisponible. Merci de réessayer plus tard.';
     if (channel === 'twilio') return res.type('text/xml').status(200).send(toTwiml(fallback));
     if (channel === 'meta') return res.sendStatus(200);
     return res.status(500).json({ error: err.message, reply: fallback });
+  }
+
+  // Signature Twilio : vérifiée ici (et non en middleware) car elle dépend du
+  // sous-compte du garage résolu ci-dessus, connu seulement après lecture du corps.
+  if (channel === 'twilio' && !twilioService.isSignatureValid(req, garage.twilioAuthToken)) {
+    console.warn('[SECU] Signature Twilio invalide pour', req.originalUrl);
+    return res.status(403).send('Invalid Twilio signature');
+  }
+
+  // Garage non actif (abonnement impayé/suspendu, ou en attente d'activation) :
+  // repli fixe, jamais d'appel IA ni d'erreur brute envoyée au client.
+  if (garage.status !== 'active') {
+    const fallback = 'Ce service est temporairement indisponible. Merci de contacter directement le garage.';
+    console.warn(`[GATE] garage ${garage.id} statut=${garage.status}, réponse de repli envoyée`);
+    if (channel === 'twilio') return res.type('text/xml').send(toTwiml(fallback));
+    if (channel === 'meta') return res.sendStatus(200);
+    return res.json({ reply: fallback, keywords: [], context: [] });
   }
 
   try {
@@ -171,7 +217,11 @@ app.post('/webhook', twilioService.verifyTwilioSignature, async (req, res) => {
     if (channel === 'twilio') {
       // Mode "api" : envoi explicite via l'API Twilio, webhook répondu à vide.
       if ((process.env.REPLY_MODE || 'twiml').toLowerCase() === 'api') {
-        await twilioService.sendWhatsApp(from, reply);
+        await twilioService.sendWhatsApp(from, reply, {
+          accountSid: garage.twilioAccountSid,
+          authToken: garage.twilioAuthToken,
+          from: garage.whatsappFrom,
+        });
         return res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
       }
       return res.type('text/xml').send(toTwiml(reply));
@@ -213,6 +263,12 @@ app.use((req, res) => {
       'PATCH|DELETE /admin/appointments/:id',
       'GET|POST /admin/quotes',
       'PATCH|DELETE /admin/quotes/:id',
+      'GET /superadmin',
+      'GET|POST /superadmin/garages',
+      'POST /superadmin/garages/:id/checkout-link',
+      'POST /superadmin/garages/:id/provision-whatsapp',
+      'PATCH /superadmin/garages/:id/status',
+      'POST /stripe/webhook',
     ],
   });
 });
@@ -245,6 +301,12 @@ app.listen(PORT, () => {
     defaultGarageId
       ? `DEFAULT_GARAGE_ID chargé (${defaultGarageId})`
       : 'ATTENTION: DEFAULT_GARAGE_ID absent, /webhook répondra une erreur de service'
+  );
+
+  console.log(
+    stripeBilling.isConfigured
+      ? 'Stripe configuré (facturation active)'
+      : "Stripe non configuré (STRIPE_SECRET_KEY/STRIPE_PRICE_ID absents) — génération de lien de paiement indisponible"
   );
 
   console.log(`Résolution DNS: ${dns.getDefaultResultOrder()}`);

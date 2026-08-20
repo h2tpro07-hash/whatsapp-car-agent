@@ -1,21 +1,18 @@
 /**
  * Envoi sortant Twilio (WhatsApp) + validation de signature des webhooks.
- * Optionnel : sans TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN, le serveur
- * répond simplement en TwiML (aucun appel API nécessaire).
+ * Le compte "maître" (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN) sert au garage
+ * pilote (mono-numéro historique) et au provisioning des sous-comptes
+ * (voir twilioProvisioning.js). Les garages provisionnés en Phase 2 utilisent
+ * leurs propres identifiants de sous-compte, résolus par tenant.js et passés
+ * explicitement à ce module.
  */
 const twilio = require('twilio');
 
-const {
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
-  TWILIO_WHATSAPP_FROM,
-  PUBLIC_URL,
-  VALIDATE_TWILIO_SIGNATURE,
-} = process.env;
+const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, PUBLIC_URL, VALIDATE_TWILIO_SIGNATURE } =
+  process.env;
 
 const isConfigured = Boolean(TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_WHATSAPP_FROM);
-
-const client = isConfigured ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
+const masterClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) : null;
 
 /** Préfixe `whatsapp:` requis par Twilio. */
 function toWhatsAppAddress(number) {
@@ -24,17 +21,24 @@ function toWhatsAppAddress(number) {
 }
 
 /**
- * Envoie un message WhatsApp via l'API Twilio (mode REPLY_MODE=api,
- * ou pour un message proactif type relance).
+ * Envoie un message WhatsApp (mode REPLY_MODE=api, ou message proactif).
+ * Sans identifiants explicites, utilise le compte maître + TWILIO_WHATSAPP_FROM
+ * (garage pilote). Pour un garage provisionné, passer ses identifiants de
+ * sous-compte et son propre numéro.
  * @param {string} to numéro destinataire (+33...)
  * @param {string} body texte
+ * @param {{accountSid?: string, authToken?: string, from?: string}} [creds]
  */
-async function sendWhatsApp(to, body) {
-  if (!isConfigured) {
-    throw new Error('Twilio non configuré (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM)');
+async function sendWhatsApp(to, body, creds = {}) {
+  const client = creds.accountSid && creds.authToken ? twilio(creds.accountSid, creds.authToken) : masterClient;
+  const fromNumber = creds.from || TWILIO_WHATSAPP_FROM;
+
+  if (!client || !fromNumber) {
+    throw new Error('Twilio non configuré (identifiants ou numéro expéditeur manquants)');
   }
+
   const msg = await client.messages.create({
-    from: toWhatsAppAddress(TWILIO_WHATSAPP_FROM),
+    from: toWhatsAppAddress(fromNumber),
     to: toWhatsAppAddress(to),
     body,
   });
@@ -42,25 +46,26 @@ async function sendWhatsApp(to, body) {
 }
 
 /**
- * Middleware Express : rejette les requêtes qui ne viennent pas de Twilio.
- * Actif uniquement si VALIDATE_TWILIO_SIGNATURE=true.
+ * Vérifie la signature Twilio d'une requête webhook avec le token du garage
+ * résolu (sous-compte) ou le token maître (garage pilote). Retourne `true`
+ * si la validation est désactivée (VALIDATE_TWILIO_SIGNATURE != 'true'),
+ * si aucun token n'est disponible, ou si la requête n'est pas signée
+ * (tests locaux JSON/Postman) — dans ces cas, ce n'est pas à cette fonction
+ * de bloquer la requête.
+ * @param {import('express').Request} req
+ * @param {string} [authToken] token du garage résolu ; sinon le token maître
  */
-function verifyTwilioSignature(req, res, next) {
-  if (String(VALIDATE_TWILIO_SIGNATURE).toLowerCase() !== 'true') return next();
-  if (!TWILIO_AUTH_TOKEN) return next();
+function isSignatureValid(req, authToken) {
+  if (String(VALIDATE_TWILIO_SIGNATURE).toLowerCase() !== 'true') return true;
 
-  // Ignorer les requêtes non-Twilio (tests JSON cURL/Postman).
+  const token = authToken || TWILIO_AUTH_TOKEN;
+  if (!token) return true;
+
   const signature = req.get('X-Twilio-Signature');
-  if (!signature) return next();
+  if (!signature) return true;
 
   const url = `${(PUBLIC_URL || '').replace(/\/$/, '')}${req.originalUrl}`;
-  const valid = twilio.validateRequest(TWILIO_AUTH_TOKEN, signature, url, req.body || {});
-
-  if (!valid) {
-    console.warn('[SECU] Signature Twilio invalide pour', url);
-    return res.status(403).send('Invalid Twilio signature');
-  }
-  return next();
+  return twilio.validateRequest(token, signature, url, req.body || {});
 }
 
-module.exports = { sendWhatsApp, verifyTwilioSignature, isConfigured };
+module.exports = { sendWhatsApp, isSignatureValid, isConfigured };

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Super-admin — Agent WhatsApp</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+  <!-- ================== ÉCRAN DE CONNEXION ================== -->
+  <div id="login" class="min-h-screen flex items-center justify-center p-4">
+    <form id="login-form" class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-8 space-y-5">
+      <div>
+        <h1 class="text-xl font-bold">Super-admin</h1>
+        <p class="text-sm text-slate-500 mt-1">Pilotage de tous les garages.</p>
+      </div>
+      <input id="login-email" type="email" autocomplete="username" placeholder="Email" required
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="Mot de passe" required
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
+      <p id="login-error" class="hidden text-sm text-red-600"></p>
+      <button type="submit" class="w-full bg-slate-900 text-white rounded-lg py-2 font-medium hover:bg-slate-700">
+        Se connecter
+      </button>
+    </form>
+  </div>
+
+  <!-- ================== APPLICATION ================== -->
+  <div id="app" class="hidden max-w-6xl mx-auto p-4 sm:p-8 space-y-8">
+
+    <header class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold">Tous les garages</h1>
+      <button id="logout" class="text-sm text-slate-600 hover:text-slate-900 underline">Déconnexion</button>
+    </header>
+
+    <section class="bg-white rounded-2xl shadow p-6">
+      <h2 class="font-semibold mb-4">Créer un garage</h2>
+      <form id="garage-form" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <input name="name" required placeholder="Nom du garage *" class="rounded-lg border border-slate-300 px-3 py-2" />
+        <select name="vertical" required class="rounded-lg border border-slate-300 px-3 py-2 bg-white">
+          <option value="">Métier *</option>
+          <option value="vente">Vente de véhicules</option>
+          <option value="reparation">Réparation</option>
+        </select>
+        <div class="flex items-center gap-3">
+          <button type="submit" class="bg-slate-900 text-white rounded-lg px-5 py-2 font-medium hover:bg-slate-700">
+            Créer
+          </button>
+          <span id="garage-form-msg" class="text-sm"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="bg-white rounded-2xl shadow overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-left">
+          <tr>
+            <th class="px-4 py-3">Garage</th>
+            <th class="px-4 py-3">Statut</th>
+            <th class="px-4 py-3">Abonnement</th>
+            <th class="px-4 py-3">Numéro WhatsApp</th>
+            <th class="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="garages-body" class="divide-y divide-slate-100"></tbody>
+      </table>
+      <p id="garages-empty" class="hidden p-8 text-center text-slate-400">Aucun garage pour l'instant.</p>
+    </section>
+  </div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+const configRes = await fetch('/config');
+if (!configRes.ok) {
+  document.body.innerHTML = '<p class="p-8 text-red-600">Configuration serveur manquante.</p>';
+  throw new Error('config manquante');
+}
+const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+
+const loginEl = document.getElementById('login');
+const appEl = document.getElementById('app');
+
+async function api(path, options = {}) {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  const token = session?.access_token;
+  const res = await fetch('/superadmin' + path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options.headers || {}) },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401) { await logout(); throw new Error(json.error || 'Session invalide'); }
+  if (!res.ok) throw new Error(json.error || 'Erreur serveur');
+  return json;
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+  errorEl.classList.add('hidden');
+
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) {
+    errorEl.textContent = error.message === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  try {
+    await showApp();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+    await logout();
+  }
+});
+
+async function logout() {
+  await supabaseClient.auth.signOut();
+  appEl.classList.add('hidden');
+  loginEl.classList.remove('hidden');
+}
+document.getElementById('logout').addEventListener('click', logout);
+
+async function showApp() {
+  loginEl.classList.add('hidden');
+  appEl.classList.remove('hidden');
+  await loadGarages();
+}
+
+const STATUS_CLS = {
+  onboarding: 'bg-amber-100 text-amber-700',
+  active: 'bg-emerald-100 text-emerald-700',
+  suspended: 'bg-red-100 text-red-700',
+  canceled: 'bg-slate-200 text-slate-600',
+};
+const NUMBER_STATUS_LABEL = {
+  pending: 'En attente d’activation',
+  active: 'Actif',
+  failed: 'Échec',
+  released: 'Libéré',
+};
+
+async function loadGarages() {
+  const { garages } = await api('/garages');
+  const body = document.getElementById('garages-body');
+  body.innerHTML = '';
+
+  garages.forEach((g) => {
+    const sub = g.subscriptions?.[0];
+    const number = g.garage_whatsapp_numbers?.[0];
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-50 align-top';
+    tr.innerHTML = `
+      <td class="px-4 py-3">
+        <div class="font-medium">${g.name}</div>
+        <div class="text-xs text-slate-400">${g.vertical}</div>
+      </td>
+      <td class="px-4 py-3">
+        <select data-status="${g.id}" class="rounded-lg border border-slate-300 px-2 py-1 text-xs bg-white">
+          ${Object.keys(STATUS_CLS).map((s) => `<option value="${s}" ${s === g.status ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </td>
+      <td class="px-4 py-3 text-xs">
+        ${sub ? `${sub.status}${sub.current_period_end ? '<br/>jusqu’au ' + new Date(sub.current_period_end).toLocaleDateString('fr-FR') : ''}` : 'Aucun'}
+      </td>
+      <td class="px-4 py-3 text-xs">
+        ${number ? `${number.whatsapp_number || '—'}<br/>${NUMBER_STATUS_LABEL[number.status] || number.status}${number.provisioning_error ? `<br/><span class="text-red-600">${number.provisioning_error}</span>` : ''}` : 'Non provisionné'}
+      </td>
+      <td class="px-4 py-3">
+        <div class="flex flex-col items-end gap-1">
+          <button data-checkout="${g.id}" class="text-slate-600 hover:text-slate-900 text-xs font-medium">Lien de paiement</button>
+          <button data-provision="${g.id}" class="text-slate-600 hover:text-slate-900 text-xs font-medium">Provisionner WhatsApp</button>
+          ${number && number.status !== 'active' ? `<button data-activate="${g.id}" class="text-emerald-600 hover:text-emerald-800 text-xs font-medium">Marquer actif</button>` : ''}
+        </div>
+      </td>`;
+    body.appendChild(tr);
+  });
+
+  document.getElementById('garages-empty').classList.toggle('hidden', garages.length > 0);
+}
+
+document.getElementById('garages-body').addEventListener('change', async (e) => {
+  const id = e.target.dataset.status;
+  if (!id) return;
+  try {
+    await api(`/garages/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status: e.target.value }) });
+  } catch (err) {
+    alert(err.message);
+  }
+  loadGarages();
+});
+
+document.getElementById('garages-body').addEventListener('click', async (e) => {
+  const checkoutId = e.target.dataset.checkout;
+  const provisionId = e.target.dataset.provision;
+  const activateId = e.target.dataset.activate;
+
+  try {
+    if (checkoutId) {
+      const { url } = await api(`/garages/${checkoutId}/checkout-link`, { method: 'POST', body: JSON.stringify({}) });
+      await navigator.clipboard.writeText(url).catch(() => {});
+      prompt('Lien de paiement (copié dans le presse-papier) — envoyez-le au garage :', url);
+    }
+    if (provisionId) {
+      e.target.textContent = 'Provisioning...';
+      await api(`/garages/${provisionId}/provision-whatsapp`, { method: 'POST', body: JSON.stringify({}) });
+      loadGarages();
+    }
+    if (activateId) {
+      await api(`/garages/${activateId}/activate-whatsapp`, { method: 'POST', body: JSON.stringify({}) });
+      loadGarages();
+    }
+  } catch (err) {
+    alert(err.message);
+    loadGarages();
+  }
+});
+
+document.getElementById('garage-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById('garage-form-msg');
+  const payload = Object.fromEntries(new FormData(e.target).entries());
+
+  try {
+    await api('/garages', { method: 'POST', body: JSON.stringify(payload) });
+    e.target.reset();
+    msg.textContent = 'Garage créé.';
+    msg.className = 'text-sm text-emerald-600';
+    loadGarages();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'text-sm text-red-600';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 4000);
+});
+
+const { data: { session } } = await supabaseClient.auth.getSession();
+if (session) {
+  try {
+    await showApp();
+  } catch {
+    await logout();
+  }
+}
+</script>
+</body>
+</html>
