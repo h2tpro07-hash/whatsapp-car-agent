@@ -181,6 +181,12 @@ Tant que l'inscription en ligne n'existe pas, c'est vous qui onboardez chaque ga
 
 Si un abonnement passe en impayé/suspendu, `garages.status` est automatiquement recalculé par le webhook Stripe et l'agent WhatsApp répond un message de repli fixe au lieu d'appeler l'IA.
 
+## Notification par email des demandes de rendez-vous (métier réparation)
+
+À chaque **nouvelle** demande de rendez-vous WhatsApp (pas à chaque message de la conversation), le propriétaire du garage reçoit un email avec le numéro du client, son message (contient souvent son nom/créneau souhaité, l'IA les lui ayant demandés), et un rappel à le recontacter — l'IA ne confirmant jamais elle-même un créneau.
+
+**Prérequis** : créer un compte sur https://resend.com (gratuit), récupérer une clé API (`RESEND_API_KEY`). Sans domaine vérifié sur Resend, `RESEND_FROM_EMAIL` ne peut envoyer qu'à l'adresse de votre propre compte Resend — suffisant pour tester, il faut vérifier un domaine pour notifier de vrais garages clients.
+
 ## Déploiement gratuit sur Render
 
 1. Render.com > **New > Blueprint** > choisir le repo : `render.yaml` est détecté (plan free, région Frankfurt, healthcheck sur `/`).

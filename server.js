@@ -21,6 +21,7 @@ const {
   findServices,
   listServices,
   logAppointmentRequest,
+  getGarageOwnerEmail,
   checkConnection,
   SUPABASE_URL,
 } = require('./src/services/supabase');
@@ -33,6 +34,8 @@ const adminRouter = require('./src/routes/admin');
 const superadminRouter = require('./src/routes/superadmin');
 const { resolveWebhookGarage } = require('./src/services/tenant');
 const stripeBilling = require('./src/services/stripeBilling');
+const notificationsService = require('./src/services/notifications');
+const { notifyNewAppointmentRequest } = notificationsService;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -138,10 +141,14 @@ async function buildAnswer(garage, message, from) {
 
     const aiText = await generateReply(garage, message, services);
 
-    // Best-effort : un échec de journalisation ne doit jamais casser la réponse au client.
-    logAppointmentRequest(garage.id, from, message, services[0]?.id || null).catch((err) =>
-      console.error('[WARN] journalisation RDV échouée:', err.message)
-    );
+    // Best-effort : un échec de journalisation/notification ne doit jamais casser la réponse au client.
+    logAppointmentRequest(garage.id, from, message, services[0]?.id || null)
+      .then(async ({ isNew }) => {
+        if (!isNew) return; // notifie une seule fois par demande, pas à chaque message de la conversation
+        const ownerEmail = await getGarageOwnerEmail(garage.id);
+        await notifyNewAppointmentRequest({ ownerEmail, garageName: garage.name, customerPhone: from, message });
+      })
+      .catch((err) => console.error('[WARN] journalisation/notification RDV échouée:', err.message));
 
     return { reply: formatForWhatsApp(aiText), keywords, context: services };
   }
@@ -307,6 +314,12 @@ app.listen(PORT, () => {
     stripeBilling.isConfigured
       ? 'Stripe configuré (facturation active)'
       : "Stripe non configuré (STRIPE_SECRET_KEY/STRIPE_PRICE_ID absents) — génération de lien de paiement indisponible"
+  );
+
+  console.log(
+    notificationsService.isConfigured
+      ? 'Notifications email configurées (RESEND_API_KEY)'
+      : 'Notifications email non configurées (RESEND_API_KEY/RESEND_FROM_EMAIL absents) — pas d\'alerte RDV par email'
   );
 
   console.log(`Résolution DNS: ${dns.getDefaultResultOrder()}`);

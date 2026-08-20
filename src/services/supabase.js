@@ -186,6 +186,8 @@ async function listServices(garageId, limit = 5) {
  * @param {string} customerPhone
  * @param {string} message texte brut du client
  * @param {string|null} serviceId meilleure correspondance de service, si trouvée
+ * @returns {Promise<{isNew: boolean}>} `isNew` indique une toute nouvelle demande
+ * (utile pour ne notifier le garage qu'une fois par demande, pas à chaque message).
  */
 async function logAppointmentRequest(garageId, customerPhone, message, serviceId) {
   const existing = await run(
@@ -205,7 +207,7 @@ async function logAppointmentRequest(garageId, customerPhone, message, serviceId
     const update = { notes };
     if (serviceId) update.service_id = serviceId;
     await run(supabase.from('appointments').update(update).eq('id', existing.id));
-    return;
+    return { isNew: false };
   }
 
   await run(
@@ -217,6 +219,30 @@ async function logAppointmentRequest(garageId, customerPhone, message, serviceId
       status: 'requested',
     })
   );
+  return { isNew: true };
+}
+
+/**
+ * Email du propriétaire d'un garage (pour les notifications), via son rôle
+ * `owner` dans `garage_members` et l'API Admin Supabase Auth.
+ * @param {string} garageId
+ * @returns {Promise<string|null>}
+ */
+async function getGarageOwnerEmail(garageId) {
+  const member = await run(
+    supabase
+      .from('garage_members')
+      .select('user_id')
+      .eq('garage_id', garageId)
+      .eq('role', 'owner')
+      .limit(1)
+      .maybeSingle()
+  );
+  if (!member) return null;
+
+  const { data, error } = await supabase.auth.admin.getUserById(member.user_id);
+  if (error || !data?.user) return null;
+  return data.user.email || null;
 }
 
 module.exports = {
@@ -228,5 +254,6 @@ module.exports = {
   findServices,
   listServices,
   logAppointmentRequest,
+  getGarageOwnerEmail,
   SUPABASE_URL,
 };
