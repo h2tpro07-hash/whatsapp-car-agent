@@ -1,15 +1,12 @@
 -- =====================================================================
--- Agent WhatsApp — Schéma Supabase multi-garages (v2)
--- Pour un PROJET NEUF. Si vous avez déjà un projet avec la table `cars`
--- mono-garage de la v1, utilisez plutôt `sql/migrate_v2_multi_tenant.sql`.
--- À coller tel quel dans Supabase > SQL Editor > Run.
+-- Migration v1 -> v2 : passage au multi-garages
+-- À exécuter UNE SEULE FOIS sur un projet Supabase qui a déjà la table
+-- `cars` mono-garage de la v1 (sinon utilisez `sql/schema.sql` directement).
+-- Supabase > SQL Editor > coller > Run.
 -- =====================================================================
 
 create extension if not exists pgcrypto;
 
--- =====================================================================
--- Tenants
--- =====================================================================
 create table if not exists public.garages (
   id                   uuid primary key default gen_random_uuid(),
   name                 text not null,
@@ -25,8 +22,6 @@ create table if not exists public.garages (
   updated_at           timestamptz not null default now()
 );
 
--- Comptes liés à un garage (le propriétaire, puis employés plus tard).
--- v1 : un utilisateur n'appartient qu'à un seul garage.
 create table if not exists public.garage_members (
   id         uuid primary key default gen_random_uuid(),
   garage_id  uuid not null references public.garages(id) on delete cascade,
@@ -37,38 +32,11 @@ create table if not exists public.garage_members (
   unique (user_id)
 );
 
--- Super-admins (vous) : table dédiée, jamais un booléen éditable par un garage.
--- Alimentée manuellement en SQL, jamais via une interface.
 create table if not exists public.superadmins (
   user_id    uuid primary key references auth.users(id) on delete cascade,
   created_at timestamptz not null default now()
 );
 
--- =====================================================================
--- Métier "vente" (revendeur de véhicules d'occasion)
--- =====================================================================
-create table if not exists public.cars (
-  id          bigint generated always as identity primary key,
-  garage_id   uuid        not null references public.garages(id) on delete cascade,
-  brand       text        not null,
-  model       text        not null,
-  year        int         not null,
-  price       numeric(10,2) not null,
-  mileage     int         not null,
-  fuel        text        not null,
-  description text,
-  status      text        not null default 'available'
-              check (status in ('available', 'reserved', 'sold')),
-  created_at  timestamptz not null default now()
-);
-create index if not exists cars_garage_idx on public.cars (garage_id);
-create index if not exists cars_brand_idx on public.cars (lower(brand));
-create index if not exists cars_model_idx on public.cars (lower(model));
-create index if not exists cars_status_idx on public.cars (status);
-
--- =====================================================================
--- Métier "réparation" (garage mécanique)
--- =====================================================================
 create table if not exists public.services (
   id           uuid primary key default gen_random_uuid(),
   garage_id    uuid not null references public.garages(id) on delete cascade,
@@ -114,7 +82,6 @@ create table if not exists public.quotes (
 );
 create index if not exists quotes_garage_idx on public.quotes (garage_id);
 
--- Journal des messages (debug, futur contexte conversationnel).
 create table if not exists public.messages (
   id             bigint generated always as identity primary key,
   garage_id      uuid not null references public.garages(id) on delete cascade,
@@ -127,10 +94,28 @@ create table if not exists public.messages (
 create index if not exists messages_garage_phone_idx on public.messages (garage_id, customer_phone, created_at desc);
 
 -- =====================================================================
--- RLS : ligne de défense secondaire.
--- Le backend utilise la clé service_role (contourne RLS) et fait lui-même
--- le filtrage par garage_id. Ces policies ne servent que si une future
--- intégration interroge Supabase directement avec un JWT utilisateur.
+-- Rattache le stock existant (v1, mono-garage) à un garage "pilote".
+-- Renommez `name` ci-dessous si vous voulez un nom différent.
+-- =====================================================================
+insert into public.garages (name, vertical, slug, status)
+select 'Mon garage', 'vente', 'garage-pilote', 'active'
+where not exists (select 1 from public.garages where slug = 'garage-pilote');
+
+alter table public.cars add column if not exists garage_id uuid references public.garages(id) on delete cascade;
+
+update public.cars
+set garage_id = (select id from public.garages where slug = 'garage-pilote')
+where garage_id is null;
+
+alter table public.cars alter column garage_id set not null;
+
+create index if not exists cars_garage_idx on public.cars (garage_id);
+create index if not exists cars_brand_idx on public.cars (lower(brand));
+create index if not exists cars_model_idx on public.cars (lower(model));
+create index if not exists cars_status_idx on public.cars (status);
+
+-- =====================================================================
+-- RLS (identique à sql/schema.sql) — ligne de défense secondaire.
 -- =====================================================================
 alter table public.garages enable row level security;
 alter table public.garage_members enable row level security;
@@ -184,46 +169,20 @@ drop policy if exists garage_members_scope on public.garage_members;
 create policy garage_members_scope on public.garage_members for select
   using (user_id = auth.uid() or public.is_superadmin());
 
--- =====================================================================
--- Données de démonstration : un garage par métier
--- =====================================================================
+-- Affiche l'UUID du garage pilote pour le mettre dans DEFAULT_GARAGE_ID.
 do $$
 declare
-  demo_vente_id       uuid;
-  demo_reparation_id  uuid;
+  pilot_id uuid;
 begin
-  insert into public.garages (name, vertical, slug, status)
-  values ('Demo Auto Occasion', 'vente', 'demo-auto-occasion', 'active')
-  returning id into demo_vente_id;
-
-  insert into public.cars (garage_id, brand, model, year, price, mileage, fuel, description, status) values
-    (demo_vente_id, 'Peugeot', '208', 2019, 11990.00, 68000, 'Essence',
-     'Peugeot 208 1.2 PureTech 82ch Active, 5 portes, climatisation auto, écran tactile, régulateur de vitesse. Carnet d''entretien complet, 2 clés, non-fumeur.',
-     'available'),
-    (demo_vente_id, 'Volkswagen', 'Golf 7', 2017, 14500.00, 112000, 'Diesel',
-     'Golf 7 1.6 TDI 115ch Confortline BlueMotion, GPS, radar de recul, sièges chauffants. Distribution faite à 100 000 km, révision à jour.',
-     'available'),
-    (demo_vente_id, 'Renault', 'Clio 5', 2021, 13900.00, 41000, 'Essence',
-     'Clio 5 1.0 TCe 100ch Intens, Apple CarPlay / Android Auto, caméra de recul, keyless. Première main, garantie constructeur restante.',
-     'available');
-
-  insert into public.garages (name, vertical, slug, status)
-  values ('Demo Garage Mécanique', 'reparation', 'demo-garage-mecanique', 'active')
-  returning id into demo_reparation_id;
-
-  insert into public.services (garage_id, name, description, price_min, price_max, duration_min) values
-    (demo_reparation_id, 'Vidange', 'Vidange huile + filtre, toutes motorisations', 69.00, 99.00, 45),
-    (demo_reparation_id, 'Révision complète', 'Contrôle des 30 points + vidange', 149.00, 249.00, 90),
-    (demo_reparation_id, 'Changement de pneus', 'Montage + équilibrage, 4 pneus', 280.00, 600.00, 60),
-    (demo_reparation_id, 'Contrôle technique', 'Passage en centre partenaire', 78.00, 78.00, 30);
-
-  raise notice 'DEFAULT_GARAGE_ID (vente, démo) = %', demo_vente_id;
-  raise notice 'DEFAULT_GARAGE_ID (réparation, démo) = %', demo_reparation_id;
+  select id into pilot_id from public.garages where slug = 'garage-pilote';
+  raise notice 'DEFAULT_GARAGE_ID = %', pilot_id;
 end $$;
 
+-- =====================================================================
 -- Étape manuelle (une fois) pour vous connecter à /admin :
 -- 1. Supabase Dashboard > Authentication > Users > Add user (email + mot de passe).
 -- 2. Copier l'UUID généré, puis exécuter (remplacez les deux UUID) :
 --    insert into public.garage_members (garage_id, user_id, role)
---    values ('<un des DEFAULT_GARAGE_ID ci-dessus>', '<UUID utilisateur>', 'owner');
+--    values ('<DEFAULT_GARAGE_ID ci-dessus>', '<UUID utilisateur>', 'owner');
 --    insert into public.superadmins (user_id) values ('<UUID utilisateur>');
+-- =====================================================================

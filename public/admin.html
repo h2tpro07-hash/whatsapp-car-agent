@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Admin stock — Agent WhatsApp</title>
+  <title>Administration — Agent WhatsApp</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-slate-100 text-slate-800">
@@ -12,10 +12,12 @@
   <div id="login" class="min-h-screen flex items-center justify-center p-4">
     <form id="login-form" class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-8 space-y-5">
       <div>
-        <h1 class="text-xl font-bold">Administration du stock</h1>
-        <p class="text-sm text-slate-500 mt-1">Entrez la clé admin (ADMIN_API_KEY).</p>
+        <h1 class="text-xl font-bold">Administration</h1>
+        <p class="text-sm text-slate-500 mt-1">Connectez-vous avec votre compte garage.</p>
       </div>
-      <input id="login-key" type="password" autocomplete="current-password" placeholder="Clé admin"
+      <input id="login-email" type="email" autocomplete="username" placeholder="Email" required
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="Mot de passe" required
              class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
       <p id="login-error" class="hidden text-sm text-red-600"></p>
       <button type="submit" class="w-full bg-slate-900 text-white rounded-lg py-2 font-medium hover:bg-slate-700">
@@ -29,119 +31,227 @@
 
     <header class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-bold">Stock véhicules</h1>
-        <p class="text-sm text-slate-500">Agent WhatsApp — les véhicules « disponible » sont proposés aux clients.</p>
+        <h1 id="garage-title" class="text-2xl font-bold">—</h1>
+        <p id="garage-subtitle" class="text-sm text-slate-500"></p>
       </div>
       <button id="logout" class="text-sm text-slate-600 hover:text-slate-900 underline">Déconnexion</button>
     </header>
 
-    <!-- Compteurs -->
-    <section id="stats" class="grid grid-cols-3 gap-4"></section>
+    <p id="status-banner" class="hidden rounded-xl bg-amber-100 text-amber-800 text-sm px-4 py-3"></p>
 
-    <!-- Formulaire d'ajout -->
-    <section class="bg-white rounded-2xl shadow p-6">
-      <h2 class="font-semibold mb-4">Ajouter un véhicule</h2>
-      <form id="car-form" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <input name="brand" required placeholder="Marque *" class="rounded-lg border border-slate-300 px-3 py-2" />
-        <input name="model" required placeholder="Modèle *" class="rounded-lg border border-slate-300 px-3 py-2" />
-        <input name="year" required type="number" min="1950" max="2100" placeholder="Année *" class="rounded-lg border border-slate-300 px-3 py-2" />
-        <input name="price" required type="number" min="0" step="50" placeholder="Prix (€) *" class="rounded-lg border border-slate-300 px-3 py-2" />
-        <input name="mileage" required type="number" min="0" placeholder="Kilométrage *" class="rounded-lg border border-slate-300 px-3 py-2" />
-        <select name="fuel" required class="rounded-lg border border-slate-300 px-3 py-2 bg-white">
-          <option value="">Carburant *</option>
-          <option>Essence</option><option>Diesel</option><option>Hybride</option>
-          <option>Électrique</option><option>GPL</option>
-        </select>
-        <textarea name="description" rows="2" placeholder="Description (options, entretien...)"
-                  class="sm:col-span-3 rounded-lg border border-slate-300 px-3 py-2"></textarea>
-        <div class="sm:col-span-3 flex items-center gap-3">
-          <button type="submit" class="bg-slate-900 text-white rounded-lg px-5 py-2 font-medium hover:bg-slate-700">
-            Ajouter au stock
-          </button>
-          <span id="form-msg" class="text-sm"></span>
+    <!-- ============ MÉTIER VENTE ============ -->
+    <div id="vente-view" class="hidden space-y-8">
+      <section id="car-stats" class="grid grid-cols-3 gap-4"></section>
+
+      <section class="bg-white rounded-2xl shadow p-6">
+        <h2 class="font-semibold mb-4">Ajouter un véhicule</h2>
+        <form id="car-form" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <input name="brand" required placeholder="Marque *" class="rounded-lg border border-slate-300 px-3 py-2" />
+          <input name="model" required placeholder="Modèle *" class="rounded-lg border border-slate-300 px-3 py-2" />
+          <input name="year" required type="number" min="1950" max="2100" placeholder="Année *" class="rounded-lg border border-slate-300 px-3 py-2" />
+          <input name="price" required type="number" min="0" step="50" placeholder="Prix (€) *" class="rounded-lg border border-slate-300 px-3 py-2" />
+          <input name="mileage" required type="number" min="0" placeholder="Kilométrage *" class="rounded-lg border border-slate-300 px-3 py-2" />
+          <select name="fuel" required class="rounded-lg border border-slate-300 px-3 py-2 bg-white">
+            <option value="">Carburant *</option>
+            <option>Essence</option><option>Diesel</option><option>Hybride</option>
+            <option>Électrique</option><option>GPL</option>
+          </select>
+          <textarea name="description" rows="2" placeholder="Description (options, entretien...)"
+                    class="sm:col-span-3 rounded-lg border border-slate-300 px-3 py-2"></textarea>
+          <div class="sm:col-span-3 flex items-center gap-3">
+            <button type="submit" class="bg-slate-900 text-white rounded-lg px-5 py-2 font-medium hover:bg-slate-700">
+              Ajouter au stock
+            </button>
+            <span id="car-form-msg" class="text-sm"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="bg-white rounded-2xl shadow overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-left">
+            <tr>
+              <th class="px-4 py-3">Véhicule</th>
+              <th class="px-4 py-3">Année</th>
+              <th class="px-4 py-3">Prix</th>
+              <th class="px-4 py-3">Km</th>
+              <th class="px-4 py-3">Carburant</th>
+              <th class="px-4 py-3">Statut</th>
+              <th class="px-4 py-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="cars-body" class="divide-y divide-slate-100"></tbody>
+        </table>
+        <p id="cars-empty" class="hidden p-8 text-center text-slate-400">Aucun véhicule en stock.</p>
+      </section>
+    </div>
+
+    <!-- ============ MÉTIER RÉPARATION ============ -->
+    <div id="reparation-view" class="hidden space-y-8">
+      <section>
+        <h2 class="font-semibold mb-4">Catalogue de services</h2>
+        <div class="bg-white rounded-2xl shadow p-6 mb-4">
+          <form id="service-form" class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <input name="name" required placeholder="Nom du service *" class="rounded-lg border border-slate-300 px-3 py-2" />
+            <input name="price_min" type="number" min="0" step="1" placeholder="Prix min (€)" class="rounded-lg border border-slate-300 px-3 py-2" />
+            <input name="price_max" type="number" min="0" step="1" placeholder="Prix max (€)" class="rounded-lg border border-slate-300 px-3 py-2" />
+            <input name="duration_min" type="number" min="0" step="5" placeholder="Durée (min)" class="rounded-lg border border-slate-300 px-3 py-2" />
+            <textarea name="description" rows="2" placeholder="Description"
+                      class="sm:col-span-4 rounded-lg border border-slate-300 px-3 py-2"></textarea>
+            <div class="sm:col-span-4 flex items-center gap-3">
+              <button type="submit" class="bg-slate-900 text-white rounded-lg px-5 py-2 font-medium hover:bg-slate-700">
+                Ajouter au catalogue
+              </button>
+              <span id="service-form-msg" class="text-sm"></span>
+            </div>
+          </form>
         </div>
-      </form>
-    </section>
 
-    <!-- Tableau du stock -->
-    <section class="bg-white rounded-2xl shadow overflow-hidden">
-      <table class="w-full text-sm">
-        <thead class="bg-slate-50 text-slate-500 text-left">
-          <tr>
-            <th class="px-4 py-3">Véhicule</th>
-            <th class="px-4 py-3">Année</th>
-            <th class="px-4 py-3">Prix</th>
-            <th class="px-4 py-3">Km</th>
-            <th class="px-4 py-3">Carburant</th>
-            <th class="px-4 py-3">Statut</th>
-            <th class="px-4 py-3 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="cars-body" class="divide-y divide-slate-100"></tbody>
-      </table>
-      <p id="empty" class="hidden p-8 text-center text-slate-400">Aucun véhicule en stock.</p>
-    </section>
+        <div class="bg-white rounded-2xl shadow overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-left">
+              <tr>
+                <th class="px-4 py-3">Service</th>
+                <th class="px-4 py-3">Prix</th>
+                <th class="px-4 py-3">Durée</th>
+                <th class="px-4 py-3">Statut</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="services-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+          <p id="services-empty" class="hidden p-8 text-center text-slate-400">Aucun service dans le catalogue.</p>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="font-semibold mb-4">Demandes de rendez-vous</h2>
+        <div class="bg-white rounded-2xl shadow overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 text-slate-500 text-left">
+              <tr>
+                <th class="px-4 py-3">Client</th>
+                <th class="px-4 py-3">Notes / demande</th>
+                <th class="px-4 py-3">Créneau confirmé</th>
+                <th class="px-4 py-3">Statut</th>
+                <th class="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="appointments-body" class="divide-y divide-slate-100"></tbody>
+          </table>
+          <p id="appointments-empty" class="hidden p-8 text-center text-slate-400">Aucune demande de rendez-vous.</p>
+        </div>
+      </section>
+    </div>
   </div>
 
-<script>
-// ---------- État & helpers ----------
-const KEY_STORE = 'adminKey';
-let adminKey = sessionStorage.getItem(KEY_STORE) || '';
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const STATUS = {
-  available: { label: 'Disponible', plural: 'Disponibles', cls: 'bg-emerald-100 text-emerald-700' },
-  reserved:  { label: 'Réservée',   plural: 'Réservées',   cls: 'bg-amber-100 text-amber-700' },
-  sold:      { label: 'Vendue',     plural: 'Vendues',     cls: 'bg-slate-200 text-slate-600' },
-};
+// ---------- Initialisation Supabase Auth ----------
+const configRes = await fetch('/config');
+if (!configRes.ok) {
+  document.body.innerHTML = '<p class="p-8 text-red-600">Configuration serveur manquante (SUPABASE_URL / SUPABASE_ANON_KEY). Contactez l\'administrateur.</p>';
+  throw new Error('config manquante');
+}
+const { supabaseUrl, supabaseAnonKey } = await configRes.json();
+const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
 
-const euro = (n) => Number(n).toLocaleString('fr-FR') + ' €';
-const km = (n) => Number(n).toLocaleString('fr-FR') + ' km';
+const loginEl = document.getElementById('login');
+const appEl = document.getElementById('app');
+let currentGarage = null;
 
-/** Appel API authentifié. */
+// ---------- Appel API authentifié ----------
 async function api(path, options = {}) {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  const token = session?.access_token;
   const res = await fetch('/admin' + path, {
     ...options,
-    headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey, ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
   });
   const json = await res.json().catch(() => ({}));
-  if (res.status === 401) { logout(); throw new Error(json.error || 'Clé admin invalide'); }
+  if (res.status === 401) { await logout(); throw new Error(json.error || 'Session invalide'); }
   if (!res.ok) throw new Error(json.error || 'Erreur serveur');
   return json;
 }
 
-// ---------- Connexion ----------
-const loginEl = document.getElementById('login');
-const appEl = document.getElementById('app');
-
+// ---------- Connexion / déconnexion ----------
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  adminKey = document.getElementById('login-key').value.trim();
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+  errorEl.classList.add('hidden');
+
+  const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) {
+    errorEl.textContent = error.message === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
   try {
-    await api('/cars');
-    sessionStorage.setItem(KEY_STORE, adminKey);
-    showApp();
+    await showApp();
   } catch (err) {
-    const el = document.getElementById('login-error');
-    el.textContent = err.message;
-    el.classList.remove('hidden');
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+    await logout();
   }
 });
 
-function logout() {
-  sessionStorage.removeItem(KEY_STORE);
-  adminKey = '';
+async function logout() {
+  await supabaseClient.auth.signOut();
+  currentGarage = null;
   appEl.classList.add('hidden');
   loginEl.classList.remove('hidden');
 }
 document.getElementById('logout').addEventListener('click', logout);
 
-function showApp() {
+async function showApp() {
+  const { garage } = await api('/me');
+  currentGarage = garage;
+
   loginEl.classList.add('hidden');
   appEl.classList.remove('hidden');
-  loadCars();
+
+  document.getElementById('garage-title').textContent = garage.name;
+  document.getElementById('garage-subtitle').textContent =
+    garage.vertical === 'reparation' ? 'Agent WhatsApp — garage de réparation' : 'Agent WhatsApp — vente de véhicules';
+
+  const banner = document.getElementById('status-banner');
+  if (garage.status !== 'active') {
+    banner.textContent =
+      garage.status === 'onboarding'
+        ? 'Votre garage est en cours de configuration : l\'agent WhatsApp n\'est pas encore actif.'
+        : `Statut du garage : ${garage.status}.`;
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+
+  document.getElementById('vente-view').classList.toggle('hidden', garage.vertical !== 'vente');
+  document.getElementById('reparation-view').classList.toggle('hidden', garage.vertical !== 'reparation');
+
+  if (garage.vertical === 'reparation') {
+    await Promise.all([loadServices(), loadAppointments()]);
+  } else {
+    await loadCars();
+  }
 }
 
-// ---------- Affichage du stock ----------
+// ================== MÉTIER VENTE ==================
+const STATUS = {
+  available: { label: 'Disponible', plural: 'Disponibles', cls: 'bg-emerald-100 text-emerald-700' },
+  reserved:  { label: 'Réservée',   plural: 'Réservées',   cls: 'bg-amber-100 text-amber-700' },
+  sold:      { label: 'Vendue',     plural: 'Vendues',     cls: 'bg-slate-200 text-slate-600' },
+};
+const euro = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('fr-FR') + ' €');
+const km = (n) => Number(n).toLocaleString('fr-FR') + ' km';
+
 async function loadCars() {
   const { cars } = await api('/cars');
   const body = document.getElementById('cars-body');
@@ -173,24 +283,20 @@ async function loadCars() {
     body.appendChild(tr);
   });
 
-  document.getElementById('empty').classList.toggle('hidden', cars.length > 0);
-  renderStats(cars);
-}
+  document.getElementById('cars-empty').classList.toggle('hidden', cars.length > 0);
 
-function renderStats(cars) {
   const counts = {
     available: cars.filter((c) => c.status === 'available').length,
     reserved: cars.filter((c) => c.status === 'reserved').length,
     sold: cars.filter((c) => c.status === 'sold').length,
   };
-  document.getElementById('stats').innerHTML = Object.entries(counts).map(([k, v]) => `
+  document.getElementById('car-stats').innerHTML = Object.entries(counts).map(([k, v]) => `
     <div class="bg-white rounded-2xl shadow p-4">
       <div class="text-2xl font-bold">${v}</div>
       <div class="text-xs text-slate-500">${v > 1 ? STATUS[k].plural : STATUS[k].label}</div>
     </div>`).join('');
 }
 
-// ---------- Actions du tableau (délégation d'événements) ----------
 document.getElementById('cars-body').addEventListener('change', async (e) => {
   const id = e.target.dataset.status;
   if (!id) return;
@@ -206,10 +312,9 @@ document.getElementById('cars-body').addEventListener('click', async (e) => {
   loadCars();
 });
 
-// ---------- Ajout ----------
 document.getElementById('car-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const msg = document.getElementById('form-msg');
+  const msg = document.getElementById('car-form-msg');
   const payload = Object.fromEntries(new FormData(e.target).entries());
 
   try {
@@ -225,8 +330,167 @@ document.getElementById('car-form').addEventListener('submit', async (e) => {
   setTimeout(() => { msg.textContent = ''; }, 4000);
 });
 
-// Session déjà ouverte ?
-if (adminKey) api('/cars').then(showApp).catch(logout);
+// ================== MÉTIER RÉPARATION ==================
+function servicePrice(s) {
+  if (!s.price_min && !s.price_max) return 'Sur devis';
+  if (s.price_min && s.price_max && s.price_min !== s.price_max) return `${euro(s.price_min)} - ${euro(s.price_max)}`;
+  return euro(s.price_min || s.price_max);
+}
+
+let servicesCache = [];
+
+async function loadServices() {
+  const { services } = await api('/services');
+  servicesCache = services;
+  const body = document.getElementById('services-body');
+  body.innerHTML = '';
+
+  services.forEach((s) => {
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-50';
+    tr.innerHTML = `
+      <td class="px-4 py-3">
+        <div class="font-medium">${s.name}</div>
+        <div class="text-xs text-slate-400 line-clamp-1">${s.description || ''}</div>
+      </td>
+      <td class="px-4 py-3">${servicePrice(s)}</td>
+      <td class="px-4 py-3">${s.duration_min ? s.duration_min + ' min' : '—'}</td>
+      <td class="px-4 py-3">
+        <span class="px-2 py-1 rounded-full text-xs font-medium ${s.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}">
+          ${s.active ? 'Actif' : 'Inactif'}
+        </span>
+      </td>
+      <td class="px-4 py-3">
+        <div class="flex justify-end gap-2">
+          <button data-toggle="${s.id}" data-active="${s.active}" class="text-slate-600 hover:text-slate-900 text-xs font-medium">
+            ${s.active ? 'Désactiver' : 'Activer'}
+          </button>
+          <button data-delete="${s.id}" class="text-red-600 hover:text-red-800 text-xs font-medium">Supprimer</button>
+        </div>
+      </td>`;
+    body.appendChild(tr);
+  });
+
+  document.getElementById('services-empty').classList.toggle('hidden', services.length > 0);
+}
+
+document.getElementById('services-body').addEventListener('click', async (e) => {
+  const toggleId = e.target.dataset.toggle;
+  const deleteId = e.target.dataset.delete;
+
+  if (toggleId) {
+    const nextActive = e.target.dataset.active !== 'true';
+    await api('/services/' + toggleId, { method: 'PATCH', body: JSON.stringify({ active: nextActive }) });
+    loadServices();
+  }
+  if (deleteId) {
+    if (!confirm('Supprimer ce service ?')) return;
+    await api('/services/' + deleteId, { method: 'DELETE' });
+    loadServices();
+  }
+});
+
+document.getElementById('service-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById('service-form-msg');
+  const payload = Object.fromEntries(new FormData(e.target).entries());
+
+  try {
+    await api('/services', { method: 'POST', body: JSON.stringify(payload) });
+    e.target.reset();
+    msg.textContent = 'Service ajouté.';
+    msg.className = 'text-sm text-emerald-600';
+    loadServices();
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = 'text-sm text-red-600';
+  }
+  setTimeout(() => { msg.textContent = ''; }, 4000);
+});
+
+const APPT_STATUS = {
+  requested: { label: 'À confirmer', cls: 'bg-amber-100 text-amber-700' },
+  confirmed: { label: 'Confirmé',    cls: 'bg-blue-100 text-blue-700' },
+  completed: { label: 'Terminé',     cls: 'bg-emerald-100 text-emerald-700' },
+  canceled:  { label: 'Annulé',      cls: 'bg-slate-200 text-slate-600' },
+  no_show:   { label: 'Absent',      cls: 'bg-red-100 text-red-700' },
+};
+
+function toDatetimeLocal(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadAppointments() {
+  const { appointments } = await api('/appointments');
+  const body = document.getElementById('appointments-body');
+  body.innerHTML = '';
+
+  appointments.forEach((appt) => {
+    const s = APPT_STATUS[appt.status] || APPT_STATUS.requested;
+    const tr = document.createElement('tr');
+    tr.className = 'hover:bg-slate-50';
+    tr.innerHTML = `
+      <td class="px-4 py-3">
+        <div class="font-medium">${appt.customer_name || appt.customer_phone}</div>
+        <div class="text-xs text-slate-400">${appt.customer_phone}</div>
+      </td>
+      <td class="px-4 py-3 max-w-xs">
+        <div class="text-xs text-slate-500 whitespace-pre-line line-clamp-3">${appt.notes || ''}</div>
+      </td>
+      <td class="px-4 py-3">
+        <input type="datetime-local" data-scheduled="${appt.id}" value="${toDatetimeLocal(appt.scheduled_at)}"
+               class="rounded-lg border border-slate-300 px-2 py-1 text-xs" />
+      </td>
+      <td class="px-4 py-3">
+        <select data-status="${appt.id}" class="rounded-lg border border-slate-300 px-2 py-1 text-xs bg-white">
+          ${Object.entries(APPT_STATUS).map(([v, o]) =>
+            `<option value="${v}" ${v === appt.status ? 'selected' : ''}>${o.label}</option>`).join('')}
+        </select>
+      </td>
+      <td class="px-4 py-3 text-right">
+        <button data-delete="${appt.id}" class="text-red-600 hover:text-red-800 text-xs font-medium">Supprimer</button>
+      </td>`;
+    body.appendChild(tr);
+  });
+
+  document.getElementById('appointments-empty').classList.toggle('hidden', appointments.length > 0);
+}
+
+document.getElementById('appointments-body').addEventListener('change', async (e) => {
+  const statusId = e.target.dataset.status;
+  const scheduledId = e.target.dataset.scheduled;
+
+  if (statusId) {
+    await api('/appointments/' + statusId, { method: 'PATCH', body: JSON.stringify({ status: e.target.value }) });
+    loadAppointments();
+  }
+  if (scheduledId) {
+    const iso = e.target.value ? new Date(e.target.value).toISOString() : null;
+    await api('/appointments/' + scheduledId, { method: 'PATCH', body: JSON.stringify({ scheduled_at: iso, status: 'confirmed' }) });
+    loadAppointments();
+  }
+});
+
+document.getElementById('appointments-body').addEventListener('click', async (e) => {
+  const id = e.target.dataset.delete;
+  if (!id) return;
+  if (!confirm('Supprimer cette demande de rendez-vous ?')) return;
+  await api('/appointments/' + id, { method: 'DELETE' });
+  loadAppointments();
+});
+
+// ---------- Session déjà ouverte ? ----------
+const { data: { session } } = await supabaseClient.auth.getSession();
+if (session) {
+  try {
+    await showApp();
+  } catch {
+    await logout();
+  }
+}
 </script>
 </body>
 </html>

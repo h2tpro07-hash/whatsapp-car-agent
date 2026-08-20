@@ -1,6 +1,6 @@
 /**
- * Agent WhatsApp pour marchand de voitures d'occasion.
- * Flux : WhatsApp -> POST /webhook -> mots-clés -> Supabase -> Groq (Llama 3) -> réponse.
+ * Agent WhatsApp multi-garages (vente de véhicules ou réparation).
+ * Flux : WhatsApp -> POST /webhook -> résolution du garage -> mots-clés -> Supabase -> Groq (Llama 3) -> réponse.
  */
 // Doit rester en tête : certains hébergeurs (Render) n'ont pas de sortie IPv6,
 // et Node >= 18 tente l'AAAA en premier -> `TypeError: fetch failed`.
@@ -15,13 +15,21 @@ const path = require('path');
 
 const express = require('express');
 
-const { findCars, listAvailableCars, checkConnection } = require('./src/services/supabase');
+const {
+  findCars,
+  listAvailableCars,
+  findServices,
+  listServices,
+  logAppointmentRequest,
+  checkConnection,
+} = require('./src/services/supabase');
 const { generateReply } = require('./src/services/ai');
 const { extractKeywords } = require('./src/utils/extract');
 const { parseIncoming, toTwiml, formatForWhatsApp } = require('./src/services/whatsapp');
 const twilioService = require('./src/services/twilio');
 const metaService = require('./src/services/meta');
 const adminRouter = require('./src/routes/admin');
+const { resolveWebhookGarage } = require('./src/services/tenant');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,12 +42,12 @@ app.use(express.urlencoded({ extended: false }));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR));
 
-// Interface web d'administration (la page demande la clé, l'API la vérifie).
+// Interface web d'administration (connexion par compte Supabase Auth, l'API vérifie le token).
 app.get(['/admin', '/admin/', '/admin/index.html'], (_req, res, next) => {
   res.sendFile(path.join(PUBLIC_DIR, 'admin.html'), (err) => (err ? next(err) : undefined));
 });
 
-// API d'administration du stock (protégée par x-admin-key).
+// API d'administration (stock véhicules ou services/RDV selon le métier du garage).
 app.use('/admin', adminRouter);
 
 /** Healthcheck : indique aussi quels canaux sortants sont configurés. */
@@ -51,6 +59,20 @@ app.get('/', (_req, res) =>
     meta: metaService.isConfigured,
   })
 );
+
+/**
+ * Configuration publique pour le navigateur (page /admin) : URL + clé anon
+ * Supabase, nécessaires à Supabase Auth JS côté client. La clé anon est
+ * prévue pour être publique (elle ne donne aucun accès sans RLS/policy).
+ */
+app.get('/config', (_req, res) => {
+  const supabaseUrl = String(process.env.SUPABASE_URL || '').trim();
+  const supabaseAnonKey = String(process.env.SUPABASE_ANON_KEY || '').trim();
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_ANON_KEY non configurées sur le serveur' });
+  }
+  return res.json({ supabaseUrl, supabaseAnonKey });
+});
 
 /**
  * Vérification du webhook Meta (WhatsApp Cloud API).
@@ -68,23 +90,35 @@ app.get('/webhook', (req, res) => {
 });
 
 /**
- * Cœur de l'agent : message client -> réponse vendeur.
+ * Cœur de l'agent : message client -> réponse vendeur/réceptionniste,
+ * selon le métier du garage résolu pour ce numéro WhatsApp.
+ * @param {{id: string, name: string, vertical: 'vente'|'reparation'}} garage
  * @param {string} message
- * @returns {Promise<{reply: string, keywords: string[], cars: Array}>}
+ * @param {string} from numéro du client (pour journaliser une demande de RDV)
+ * @returns {Promise<{reply: string, keywords: string[], context: Array}>}
  */
-async function buildAnswer(message) {
-  // 1. Extraire les mots-clés (marque / modèle)
+async function buildAnswer(garage, message, from) {
   const keywords = extractKeywords(message);
 
-  // 2. Interroger Supabase (fallback : catalogue disponible)
-  let cars = keywords.length ? await findCars(keywords) : [];
-  if (cars.length === 0) cars = await listAvailableCars(3);
+  if (garage.vertical === 'reparation') {
+    let services = keywords.length ? await findServices(garage.id, keywords) : [];
+    if (services.length === 0) services = await listServices(garage.id, 5);
 
-  // 3. Générer la réponse avec Groq à partir des seules données Supabase
-  const aiText = await generateReply(message, cars);
+    const aiText = await generateReply(garage, message, services);
 
-  // 4. Formater pour WhatsApp
-  return { reply: formatForWhatsApp(aiText), keywords, cars };
+    // Best-effort : un échec de journalisation ne doit jamais casser la réponse au client.
+    logAppointmentRequest(garage.id, from, message, services[0]?.id || null).catch((err) =>
+      console.error('[WARN] journalisation RDV échouée:', err.message)
+    );
+
+    return { reply: formatForWhatsApp(aiText), keywords, context: services };
+  }
+
+  let cars = keywords.length ? await findCars(garage.id, keywords) : [];
+  if (cars.length === 0) cars = await listAvailableCars(garage.id, 3);
+
+  const aiText = await generateReply(garage, message, cars);
+  return { reply: formatForWhatsApp(aiText), keywords, context: cars };
 }
 
 /**
@@ -96,24 +130,39 @@ app.post('/webhook', twilioService.verifyTwilioSignature, async (req, res) => {
   const { channel, from, body } = parseIncoming(req);
   console.log(`[IN ] ${channel} ${from}: ${body}`);
 
+  // Résout le garage destinataire (provisoire : un seul garage par déploiement, voir tenant.js).
+  let garage;
+  try {
+    garage = await resolveWebhookGarage();
+  } catch (err) {
+    console.error('[ERR] résolution du garage:', err.message);
+    const fallback = 'Service temporairement indisponible. Merci de réessayer plus tard.';
+    if (channel === 'twilio') return res.type('text/xml').status(200).send(toTwiml(fallback));
+    if (channel === 'meta') return res.sendStatus(200);
+    return res.status(500).json({ error: err.message, reply: fallback });
+  }
+
   try {
     if (!body.trim()) {
-      const empty = 'Bonjour ! Quel véhicule recherchez-vous ? (marque et modèle)';
+      const empty =
+        garage.vertical === 'reparation'
+          ? 'Bonjour ! Quel service recherchez-vous ? (vidange, révision, pneus, contrôle technique...)'
+          : 'Bonjour ! Quel véhicule recherchez-vous ? (marque et modèle)';
       if (channel === 'twilio') return res.type('text/xml').send(toTwiml(empty));
       if (channel === 'meta') return res.sendStatus(200);
-      return res.json({ reply: empty, cars: [] });
+      return res.json({ reply: empty, keywords: [], context: [] });
     }
 
     // Meta : répondre 200 tout de suite (sinon Meta réessaie), puis envoyer via l'API.
     if (channel === 'meta') {
       res.sendStatus(200);
-      const { reply } = await buildAnswer(body);
+      const { reply } = await buildAnswer(garage, body, from);
       await metaService.sendWhatsApp(from, reply);
       console.log(`[OUT] meta ${from}: ${reply}`);
       return undefined;
     }
 
-    const { reply, keywords, cars } = await buildAnswer(body);
+    const { reply, keywords, context } = await buildAnswer(garage, body, from);
     console.log(`[OUT] ${channel} ${from}: ${reply}`);
 
     if (channel === 'twilio') {
@@ -128,7 +177,9 @@ app.post('/webhook', twilioService.verifyTwilioSignature, async (req, res) => {
     return res.json({
       reply,
       keywords,
-      cars: cars.map((c) => ({ id: c.id, brand: c.brand, model: c.model })),
+      ...(garage.vertical === 'reparation'
+        ? { services: context.map((s) => ({ id: s.id, name: s.name })) }
+        : { cars: context.map((c) => ({ id: c.id, brand: c.brand, model: c.model })) }),
     });
   } catch (err) {
     console.error('[ERR]', err);
@@ -145,7 +196,21 @@ app.post('/webhook', twilioService.verifyTwilioSignature, async (req, res) => {
 app.use((req, res) => {
   res.status(404).json({
     error: `Route introuvable: ${req.method} ${req.originalUrl}`,
-    routes: ['GET /', 'GET /admin', 'GET|POST /webhook', 'GET|POST /admin/cars', 'PATCH|DELETE /admin/cars/:id'],
+    routes: [
+      'GET /',
+      'GET /config',
+      'GET /admin',
+      'GET /admin/me',
+      'GET|POST /webhook',
+      'GET|POST /admin/cars',
+      'PATCH|DELETE /admin/cars/:id',
+      'GET|POST /admin/services',
+      'PATCH|DELETE /admin/services/:id',
+      'GET|POST /admin/appointments',
+      'PATCH|DELETE /admin/appointments/:id',
+      'GET|POST /admin/quotes',
+      'PATCH|DELETE /admin/quotes/:id',
+    ],
   });
 });
 
@@ -165,11 +230,18 @@ app.listen(PORT, () => {
       : `ATTENTION: ${adminPage} introuvable, /admin renverra une erreur`
   );
 
-  const adminKey = String(process.env.ADMIN_API_KEY || '');
+  const supabaseAnonKey = String(process.env.SUPABASE_ANON_KEY || '').trim();
   console.log(
-    adminKey.trim()
-      ? `ADMIN_API_KEY chargée (${adminKey.trim().length} caractères)`
-      : 'ATTENTION: ADMIN_API_KEY absente, /admin/cars répondra 500'
+    supabaseAnonKey
+      ? 'SUPABASE_ANON_KEY chargée (connexion admin via Supabase Auth)'
+      : 'ATTENTION: SUPABASE_ANON_KEY absente, la page /admin ne pourra pas se connecter'
+  );
+
+  const defaultGarageId = String(process.env.DEFAULT_GARAGE_ID || '').trim();
+  console.log(
+    defaultGarageId
+      ? `DEFAULT_GARAGE_ID chargé (${defaultGarageId})`
+      : 'ATTENTION: DEFAULT_GARAGE_ID absent, /webhook répondra une erreur de service'
   );
 
   console.log(`Résolution DNS: ${dns.getDefaultResultOrder()}`);

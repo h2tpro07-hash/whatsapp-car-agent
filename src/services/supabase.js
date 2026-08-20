@@ -100,7 +100,7 @@ function networkError(err) {
  */
 async function checkConnection() {
   try {
-    await run(supabase.from('cars').select('id').limit(1));
+    await run(supabase.from('garages').select('id').limit(1));
     return { ok: true, url: SUPABASE_URL };
   } catch (err) {
     return { ok: false, url: SUPABASE_URL, error: err.message };
@@ -108,13 +108,19 @@ async function checkConnection() {
 }
 
 /**
- * Cherche les véhicules disponibles correspondant à des mots-clés.
+ * Cherche les véhicules disponibles d'un garage correspondant à des mots-clés.
+ * @param {string} garageId
  * @param {string[]} keywords ex: ['peugeot', '208']
  * @param {number} limit
  * @returns {Promise<Array>} lignes de la table `cars`
  */
-async function findCars(keywords, limit = 3) {
-  let query = supabase.from('cars').select('*').eq('status', 'available').limit(limit);
+async function findCars(garageId, keywords, limit = 3) {
+  let query = supabase
+    .from('cars')
+    .select('*')
+    .eq('garage_id', garageId)
+    .eq('status', 'available')
+    .limit(limit);
 
   if (keywords.length > 0) {
     // OR sur marque + modèle pour chaque mot-clé : brand.ilike.%208%,model.ilike.%208%,...
@@ -128,13 +134,14 @@ async function findCars(keywords, limit = 3) {
 }
 
 /**
- * Fallback : le catalogue disponible le plus récent (si aucun modèle détecté).
+ * Fallback : le catalogue disponible le plus récent d'un garage (si aucun modèle détecté).
  */
-async function listAvailableCars(limit = 3) {
+async function listAvailableCars(garageId, limit = 3) {
   const data = await run(
     supabase
       .from('cars')
       .select('*')
+      .eq('garage_id', garageId)
       .eq('status', 'available')
       .order('created_at', { ascending: false })
       .limit(limit)
@@ -142,4 +149,84 @@ async function listAvailableCars(limit = 3) {
   return data || [];
 }
 
-module.exports = { supabase, run, checkConnection, findCars, listAvailableCars, SUPABASE_URL };
+/**
+ * Cherche dans le catalogue de services actifs d'un garage (métier réparation).
+ * @param {string} garageId
+ * @param {string[]} keywords
+ * @param {number} limit
+ * @returns {Promise<Array>} lignes de la table `services`
+ */
+async function findServices(garageId, keywords, limit = 5) {
+  let query = supabase.from('services').select('*').eq('garage_id', garageId).eq('active', true).limit(limit);
+
+  if (keywords.length > 0) {
+    const filter = keywords.map((k) => `name.ilike.%${k}%`).join(',');
+    query = query.or(filter);
+  }
+
+  return (await run(query)) || [];
+}
+
+/**
+ * Fallback : le catalogue de services actifs d'un garage (si aucune correspondance).
+ */
+async function listServices(garageId, limit = 5) {
+  const data = await run(
+    supabase.from('services').select('*').eq('garage_id', garageId).eq('active', true).order('name').limit(limit)
+  );
+  return data || [];
+}
+
+/**
+ * Journalise une demande de rendez-vous (métier réparation) : regroupe les
+ * messages d'un même client encore "en attente" plutôt que de créer une ligne
+ * par message, pour donner au staff un dossier client lisible dans l'admin.
+ * L'IA ne confirme jamais un créneau elle-même — c'est le staff qui le fait.
+ * @param {string} garageId
+ * @param {string} customerPhone
+ * @param {string} message texte brut du client
+ * @param {string|null} serviceId meilleure correspondance de service, si trouvée
+ */
+async function logAppointmentRequest(garageId, customerPhone, message, serviceId) {
+  const existing = await run(
+    supabase
+      .from('appointments')
+      .select('id, notes')
+      .eq('garage_id', garageId)
+      .eq('customer_phone', customerPhone)
+      .eq('status', 'requested')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  );
+
+  if (existing) {
+    const notes = `${existing.notes || ''}\n${message}`.trim();
+    const update = { notes };
+    if (serviceId) update.service_id = serviceId;
+    await run(supabase.from('appointments').update(update).eq('id', existing.id));
+    return;
+  }
+
+  await run(
+    supabase.from('appointments').insert({
+      garage_id: garageId,
+      service_id: serviceId || null,
+      customer_phone: customerPhone,
+      notes: message,
+      status: 'requested',
+    })
+  );
+}
+
+module.exports = {
+  supabase,
+  run,
+  checkConnection,
+  findCars,
+  listAvailableCars,
+  findServices,
+  listServices,
+  logAppointmentRequest,
+  SUPABASE_URL,
+};

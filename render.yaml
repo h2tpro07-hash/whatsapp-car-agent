@@ -22,14 +22,18 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      # Clé anon/publishable Supabase : prévue pour être publique, utilisée par le
+      # navigateur (page /admin) pour l'authentification (Supabase Auth).
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      # UUID du garage servi par ce déploiement (voir sql/schema.sql ou
+      # sql/migrate_v2_multi_tenant.sql, qui l'affichent en NOTICE après exécution).
+      - key: DEFAULT_GARAGE_ID
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
-        value: llama-3.1-8b-instant
-      # Clé de l'interface d'admin : générée automatiquement par Render.
-      # La récupérer dans Environment > ADMIN_API_KEY pour se connecter à /admin.
-      - key: ADMIN_API_KEY
-        generateValue: true
+        value: openai/gpt-oss-20b
       - key: REPLY_MODE
         value: twiml
       - key: VALIDATE_TWILIO_SIGNATURE
