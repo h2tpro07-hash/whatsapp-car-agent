@@ -95,7 +95,7 @@ async function generateReply(garage, customerMessage, contextData) {
     // openai/gpt-oss-* est un modèle "raisonneur" : une partie du budget de tokens part
     // dans un raisonnement caché avant la réponse finale. Avec un max_tokens trop bas,
     // la réponse visible peut arriver vide ou tronquée en plein milieu.
-    max_tokens: 600,
+    max_tokens: 2000,
     reasoning_effort: 'low',
     messages: [
       { role: 'system', content: systemPrompt },
