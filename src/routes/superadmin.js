@@ -52,6 +52,35 @@ router.post('/garages', async (req, res, next) => {
   }
 });
 
+/**
+ * POST /superadmin/garages/:id/invite-owner — crée le compte Supabase Auth
+ * du propriétaire du garage et l'invite par email (il choisit lui-même son
+ * mot de passe en cliquant le lien reçu). Le lie immédiatement au garage.
+ */
+router.post('/garages/:id/invite-owner', async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'email est obligatoire' });
+
+    const garage = await run(supabase.from('garages').select('id').eq('id', req.params.id).maybeSingle());
+    if (!garage) return res.status(404).json({ error: 'Garage introuvable' });
+
+    const publicUrl = String(process.env.PUBLIC_URL || '').trim();
+    const redirectTo = publicUrl ? `${publicUrl.replace(/\/$/, '')}/admin` : undefined;
+
+    const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
+    if (error) return res.status(400).json({ error: `Invitation échouée: ${error.message}` });
+
+    await run(
+      supabase.from('garage_members').insert({ garage_id: req.params.id, user_id: data.user.id, role: 'owner' })
+    );
+
+    res.status(201).json({ invited: email });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** POST /superadmin/garages/:id/checkout-link — génère un lien de paiement Stripe (abonnement mensuel). */
 router.post('/garages/:id/checkout-link', async (req, res, next) => {
   try {

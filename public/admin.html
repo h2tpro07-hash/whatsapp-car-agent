@@ -26,6 +26,22 @@
     </form>
   </div>
 
+  <!-- ================== ÉCRAN "CHOISIR SON MOT DE PASSE" (lien d'invitation) ================== -->
+  <div id="set-password" class="hidden min-h-screen flex items-center justify-center p-4">
+    <form id="set-password-form" class="w-full max-w-sm bg-white rounded-2xl shadow-lg p-8 space-y-5">
+      <div>
+        <h1 class="text-xl font-bold">Bienvenue</h1>
+        <p class="text-sm text-slate-500 mt-1">Choisissez votre mot de passe pour activer votre accès.</p>
+      </div>
+      <input id="new-password" type="password" autocomplete="new-password" placeholder="Nouveau mot de passe" required minlength="6"
+             class="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-800" />
+      <p id="set-password-error" class="hidden text-sm text-red-600"></p>
+      <button type="submit" class="w-full bg-slate-900 text-white rounded-lg py-2 font-medium hover:bg-slate-700">
+        Valider
+      </button>
+    </form>
+  </div>
+
   <!-- ================== APPLICATION ================== -->
   <div id="app" class="hidden max-w-6xl mx-auto p-4 sm:p-8 space-y-8">
 
@@ -159,6 +175,7 @@ const supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
 
 const loginEl = document.getElementById('login');
 const appEl = document.getElementById('app');
+const setPasswordEl = document.getElementById('set-password');
 let currentGarage = null;
 
 // ---------- Appel API authentifié ----------
@@ -207,9 +224,34 @@ async function logout() {
   await supabaseClient.auth.signOut();
   currentGarage = null;
   appEl.classList.add('hidden');
+  setPasswordEl.classList.add('hidden');
   loginEl.classList.remove('hidden');
 }
 document.getElementById('logout').addEventListener('click', logout);
+
+// ---------- Lien d'invitation : choisir son mot de passe ----------
+document.getElementById('set-password-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const password = document.getElementById('new-password').value;
+  const errorEl = document.getElementById('set-password-error');
+  errorEl.classList.add('hidden');
+
+  const { error } = await supabaseClient.auth.updateUser({ password });
+  if (error) {
+    errorEl.textContent = error.message;
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  history.replaceState(null, '', window.location.pathname); // retire le jeton d'invitation de l'URL
+  setPasswordEl.classList.add('hidden');
+  try {
+    await showApp();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  }
+});
 
 async function showApp() {
   const { garage } = await api('/me');
@@ -482,9 +524,15 @@ document.getElementById('appointments-body').addEventListener('click', async (e)
   loadAppointments();
 });
 
-// ---------- Session déjà ouverte ? ----------
+// ---------- Session déjà ouverte, ou lien d'invitation/récupération ? ----------
+const hashParams = new URLSearchParams(window.location.hash.slice(1));
+const isInviteOrRecovery = hashParams.get('type') === 'invite' || hashParams.get('type') === 'recovery';
+
 const { data: { session } } = await supabaseClient.auth.getSession();
-if (session) {
+if (session && isInviteOrRecovery) {
+  loginEl.classList.add('hidden');
+  setPasswordEl.classList.remove('hidden');
+} else if (session) {
   try {
     await showApp();
   } catch {

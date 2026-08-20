@@ -173,6 +173,7 @@ async function loadGarages() {
       </td>
       <td class="px-4 py-3">
         <div class="flex flex-col items-end gap-1">
+          <button data-invite="${g.id}" class="text-slate-600 hover:text-slate-900 text-xs font-medium">Créer l'accès</button>
           <button data-checkout="${g.id}" class="text-slate-600 hover:text-slate-900 text-xs font-medium">Lien de paiement</button>
           <button data-provision="${g.id}" class="text-slate-600 hover:text-slate-900 text-xs font-medium">Provisionner WhatsApp</button>
           ${number && number.status !== 'active' ? `<button data-activate="${g.id}" class="text-emerald-600 hover:text-emerald-800 text-xs font-medium">Marquer actif</button>` : ''}
@@ -196,11 +197,19 @@ document.getElementById('garages-body').addEventListener('change', async (e) => 
 });
 
 document.getElementById('garages-body').addEventListener('click', async (e) => {
+  const inviteId = e.target.dataset.invite;
   const checkoutId = e.target.dataset.checkout;
   const provisionId = e.target.dataset.provision;
   const activateId = e.target.dataset.activate;
 
   try {
+    if (inviteId) {
+      const email = prompt('Email du propriétaire du garage :');
+      if (email) {
+        await api(`/garages/${inviteId}/invite-owner`, { method: 'POST', body: JSON.stringify({ email }) });
+        alert(`Invitation envoyée à ${email}. Il recevra un email pour choisir son mot de passe.`);
+      }
+    }
     if (checkoutId) {
       const { url } = await api(`/garages/${checkoutId}/checkout-link`, { method: 'POST', body: JSON.stringify({}) });
       await navigator.clipboard.writeText(url).catch(() => {});
