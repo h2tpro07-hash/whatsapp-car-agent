@@ -22,6 +22,7 @@ const {
   listServices,
   logAppointmentRequest,
   checkConnection,
+  SUPABASE_URL,
 } = require('./src/services/supabase');
 const { generateReply } = require('./src/services/ai');
 const { extractKeywords } = require('./src/utils/extract');
@@ -66,12 +67,14 @@ app.get('/', (_req, res) =>
  * prévue pour être publique (elle ne donne aucun accès sans RLS/policy).
  */
 app.get('/config', (_req, res) => {
-  const supabaseUrl = String(process.env.SUPABASE_URL || '').trim();
   const supabaseAnonKey = String(process.env.SUPABASE_ANON_KEY || '').trim();
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!SUPABASE_URL || !supabaseAnonKey) {
     return res.status(500).json({ error: 'SUPABASE_URL / SUPABASE_ANON_KEY non configurées sur le serveur' });
   }
-  return res.json({ supabaseUrl, supabaseAnonKey });
+  // Réutilise l'URL déjà normalisée par services/supabase.js (espaces, slash final,
+  // guillemets collés depuis le dashboard Render) pour éviter un chemin malformé
+  // côté Supabase Auth JS dans le navigateur ("Invalid path specified in request URL").
+  return res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey });
 });
 
 /**
