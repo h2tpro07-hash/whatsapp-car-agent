@@ -56,6 +56,10 @@ router.post('/garages', async (req, res, next) => {
  * POST /superadmin/garages/:id/invite-owner — crée le compte Supabase Auth
  * du propriétaire du garage et l'invite par email (il choisit lui-même son
  * mot de passe en cliquant le lien reçu). Le lie immédiatement au garage.
+ *
+ * Si l'email est déjà enregistré (ex: précédente invitation expirée sans
+ * mot de passe défini), on ne recrée pas de compte : on renvoie un email de
+ * réinitialisation de mot de passe au compte existant et on le lie au garage.
  */
 router.post('/garages/:id/invite-owner', async (req, res, next) => {
   try {
@@ -68,11 +72,30 @@ router.post('/garages/:id/invite-owner', async (req, res, next) => {
     const publicUrl = String(process.env.PUBLIC_URL || '').trim();
     const redirectTo = publicUrl ? `${publicUrl.replace(/\/$/, '')}/admin` : undefined;
 
-    const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
-    if (error) return res.status(400).json({ error: `Invitation échouée: ${error.message}` });
+    const invite = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
+    let userId = invite.data?.user?.id;
+
+    if (invite.error) {
+      if (!/already.*registered/i.test(invite.error.message)) {
+        return res.status(400).json({ error: `Invitation échouée: ${invite.error.message}` });
+      }
+
+      // Compte déjà créé (précédente invitation jamais finalisée) : retrouver son id...
+      const { data: list, error: listError } = await supabase.auth.admin.listUsers();
+      if (listError) return res.status(400).json({ error: listError.message });
+      const existing = list.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+      if (!existing) return res.status(400).json({ error: 'Compte introuvable malgré "déjà enregistré"' });
+      userId = existing.id;
+
+      // ...puis renvoyer un email pour (re)définir le mot de passe.
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (resetError) return res.status(400).json({ error: resetError.message });
+    }
 
     await run(
-      supabase.from('garage_members').insert({ garage_id: req.params.id, user_id: data.user.id, role: 'owner' })
+      supabase
+        .from('garage_members')
+        .upsert({ garage_id: req.params.id, user_id: userId, role: 'owner' }, { onConflict: 'garage_id,user_id' })
     );
 
     res.status(201).json({ invited: email });
